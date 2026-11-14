@@ -615,3 +615,38 @@ Cold and warm turns were measured with `probe.ts --sessions=24 --targets=https:/
 The Worker headers column is the `worker` Server-Timing duration. The edge first delta adds that duration to the client time from headers to the first delta, so it removes the client to edge connection time (the hosted Hand adds about 0.7 s through its TLS proxy). The cold header gate holds on every client. The cold first delta does not change outside the spread between runs, because the provider first byte dominates it.
 
 Every turn of the after runs reports one provider request with response bytes, except two. Of 432 turns, 16 had a second provider request. In 14 of them the second request was cancelled with 0 bytes after the other request returned headers (claude first byte hedge or codex spare connection race). One codex turn on dev-georgios (turn 3) took the first request's headers at 554 ms, read 73,225 bytes until 658 ms and then no bytes. The hedge request started at 1,520 ms and won, and the first request was cancelled at 2,385 ms. The first delta came from the winner at 2,381 ms, so the loser produced no rendered text. One claude turn on gak-9 made two sequential requests with 1 and 3 input items, which is a second model step and not a hedge. The probe reads `timing.model_requests` and does not read the `x-nanocode-hedge` header or the persisted `model.call` rows, so this entry does not verify the hedge marker or that losers are absent from the turn log.
+
+## 2026-11-14: warm gate on version 8397f938 from gak-9, and hedge accounting in production
+
+Version 8397f938 (d234337, nanocode-ts build-39696b0, nanocode f8fda35ab) was measured from gak-9 (Apple M1 Max, SJC) with `~/nc-release/gk2/inter3.sh`, the script of the 581ed28 entry. It alternates one native nanocode TUI session (`run-mac.ts --live --lanes=live-nc-claude@native`, nanocode 8467d6aa0, Claude login) and one Worker session (`wprobe2.mjs`, `https://cloudflare.nanocode.xyz/`) per index. Both lanes send the same prompt ("Reply with only the word formed by writing '<pair>' four times. (<run id>)") with the same model and the model's default effort, 20 sessions of 3 turns each, 0 errors. haiku ran 23:04 to 23:13 UTC and sonnet 23:13 to 23:22 UTC. Native TTFT is Enter to the first reply glyph. Worker TTFT is POST to the first `assistant.delta` at the client. Values are ms.
+
+| model | turn | native p50 / p99 | Worker p50 / p99 | Worker minus native p50 / p99 |
+| --- | --- | --- | --- | --- |
+| claude-haiku-5-5 | 1 | 804 / 1100 | 1097 / 2424 | +293 / +1324 |
+| claude-haiku-5-5 | 2 | 575 / 1557 | 835 / 1821 | +260 / +264 |
+| claude-haiku-5-5 | 3 | 600 / 1558 | 852 / 2023 | +252 / +465 |
+| claude-sonnet-5-5 | 1 | 888 / 1372 | 1501 / 2423 | +613 / +1051 |
+| claude-sonnet-5-5 | 2 | 759 / 1026 | 889 / 1165 | +130 / +139 |
+| claude-sonnet-5-5 | 3 | 794 / 1210 | 1022 / 1310 | +228 / +100 |
+
+The +50 ms gate fails on every warm cell. The earlier gak-9 haiku result on 9b2b7d2d was +208 and +223 ms p50. The hosted Hand result of +12 and -19 ms (e5e60ca0) does not hold from gak-9: there, native nanocode also crossed the hosted Hand's TLS proxy, which added to the native lane.
+
+The pre-dispatch commit is gone. The provider request starts 11 to 15 ms after admission start on warm turns (p50, both models), against 33 to 36 ms before 581ed28 and a190f20. The rest of the gap, warm p50:
+
+| component | haiku t2 / t3 | sonnet t2 / t3 |
+| --- | --- | --- |
+| client POST to stream headers (from the Worker) | 104 / 58 | 53 / 66 |
+| client POST to `input.accepted` at the client | 225 / 191 | 179 / 194 |
+| admission start to provider request | 11 / 13 | 11 / 15 |
+| provider first byte at the session object | 615 / 635 | 694 / 809 |
+
+`input.accepted` is the first frame that the session object sends. It reaches gak-9 120 to 140 ms after the Worker headers, so the edge to session object round trip, not the object, holds most of the gap. The provider first byte through the AI binding is also 40 to 50 ms (haiku) above native's whole Enter-to-glyph time. Only a session object near the client, or a provider request sent from the edge, shortens the first part. The per-colo pool entry measured that placement as a loss on the admission commit, so this entry changes no code.
+
+Hedge accounting was checked against the live stream, because the Worker exposes no turn log route without the access token and the gateway runs in the session object, so `wrangler tail` shows no model request. The probe (`~/hedge/hprobe.mjs` on the hosted Hand, 23:05 to 23:20 UTC) reads `timing.model_requests`, the agent `seq` of every live frame and the result usage. The SDK sends `model.call.started`, `model.call.completed` and the attempt and connection events as live telemetry with seq 0, and `one_log` does not persist them (`telemetry` in crates/runtime/agent/src/one_log.rs). The public stream filters them, so each one leaves a gap in the agent `seq`.
+
+| provider | turns | hedged turns | loser | agent seq of a hedged turn | usage of a hedged turn |
+| --- | --- | --- | --- | --- | --- |
+| claude-haiku-5-5 | 81 | 3 (turn 3) | 2 hedges cancelled with 0 bytes, 1 primary cancelled with 0 bytes and the hedge won | 15,16,18,20,21, the same as the 24 unhedged turn 3 | tokens once (12,811 input), estimated cost with the duplicate's input (0.000267 against 0.000135 USD) |
+| gpt-6.1-sol | 111 | 15 (14 turn 1, 1 turn 2) | 14 hedges cancelled with 0 bytes, 1 primary cancelled with 0 bytes and the hedge won | 1,2,11,14,18 and 19,20,29,32,36, the same as unhedged turns | input tokens twice (25,582 against 12,790), cost of both |
+
+Each hedged turn has the gaps of one `model.call.started` and one `model.call.completed`, so the loser adds no model call or attempt event, and no persisted event refers to it. Every loser ends with 0 response bytes. The duplicate input in usage and cost is the policy of nanocode 1d4463636 ("added to the call's estimated cost (Claude) and to the run's usage and cost (Codex)"), not a second count of the loser. The two backends differ: Claude adds the duplicate only to the cost, and Codex also adds it to the input token counts. The gpt-6.1-sol hedge fired on 14 of 37 cold turns at the 1,500 ms floor (`started_ms` 1,586 to 1,944), and the primary won all 14 within 1,268 to 1,605 ms of its start, so each of those turns paid for the duplicate input without a faster first token. The `x-nanocode-hedge` marker is not visible in production: the Claude gateway forwards only its allowed headers to the AI binding, and the Codex marker is in `client_metadata` of the body. The nanocode simulator (`model_call_duplicated`, mutation `hedge-unmarked`) and `scripts/hillclimb.mjs` check it locally. The gate's own Worker lane also hedged 2 of 60 haiku turns (provider request 1,508 and 1,636 ms after admission), and both turns completed with one reply.
