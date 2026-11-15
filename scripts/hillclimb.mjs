@@ -16,6 +16,7 @@ const { values } = parseArgs({ options: {
   "gate-agents": { type: "string" },
   limit: { type: "string", default: "3600" },
   page: { type: "string" },
+  shard: { type: "string", default: "0" },
 } });
 
 const RATE = Number(values.rate);
@@ -30,7 +31,7 @@ if (!values.scenario) {
     const agents = scenario === "score" ? values.agents : values["gate-agents"] ?? values.agents;
     const out = "output/hillclimb/" + values.label + "-" + scenario + ".json";
     const started = performance.now();
-    const child = spawnSync(process.execPath, [process.argv[1], "--scenario", scenario, "--agents", agents, "--batch", values.batch, "--rate", values.rate, "--latency", values.latency, "--label", values.label, "--limit", values.limit, ...(values.page ? ["--page", values.page] : [])], { stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, HILLCLIMB_OUT: out } });
+    const child = spawnSync(process.execPath, [process.argv[1], "--scenario", scenario, "--agents", agents, "--batch", values.batch, "--rate", values.rate, "--latency", values.latency, "--label", values.label, "--limit", values.limit, "--shard", values.shard, ...(values.page ? ["--page", values.page] : [])], { stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, HILLCLIMB_OUT: out } });
     runs[scenario] = (() => { try { return JSON.parse(readFileSync(out, "utf8")); } catch { return { failure: "scenario exited " + child.status + " without a report" }; } })();
     console.error(scenario + " finished in " + ((performance.now() - started) / 1000).toFixed(0) + " s");
   }
@@ -80,7 +81,15 @@ function score(runs) {
 const scenario = values.scenario;
 const AGENTS = Number(values.agents);
 const BATCH = Number(values.batch);
-const provider_counts = { accepted: 0, rejected: 0, hedges: 0, root_calls: 0, root_bytes: 0, child_calls: 0, after_restart: 0, child_after_restart: 0 };
+const SHARD = Number(values.shard);
+const fanout = n => Math.min(SHARD, Math.max(1, Math.ceil(n / SHARD)));
+const ROOT_CHILDREN = SHARD > 0 ? fanout(AGENTS) : AGENTS;
+const spawnCell = (n, from, wait) => {
+  const leaf = wait && n <= SHARD;
+  const waits = wait ? "await Promise.all(ids.map(async (id) => { for (;;) { const w = await tools.wait_agent({ agent_ids: [id], timeout_ms: 600000 }).catch(() => null); if (!w || w.agents.every((a) => !['pending', 'running', 'closing'].includes(a.status.state))) return; } }));" : "";
+  return "const n = " + n + ", s = " + from + ", c = " + (leaf ? n : fanout(n)) + ", b = " + BATCH + ", leaf = " + leaf + "; const share = (i) => Math.floor(n / c) + (i < n % c ? 1 : 0); const start = (i) => s + i * Math.floor(n / c) + Math.min(i, n % c); const ids = []; const spawn = (i) => tools.spawn_agent({ role: leaf ? 'worker' : 'coordinator', task: leaf ? 'Return the string ok-' + (s + i) + '.' : 'COORDINATE ' + share(i) + ' FROM ' + start(i) + '.', harness: null, model: null, thinking: null, reasoning_mode: null, output_contract: { kind: 'string' } }); for (let i = 0; i < c; i += b) { const r = await Promise.all(Array.from({ length: Math.min(b, c - i) }, (_, j) => spawn(i + j))); for (const x of r) ids.push(x.agent_id); } " + waits + " text('coordinated ' + n);";
+};
+const provider_counts = { accepted: 0, rejected: 0, hedges: 0, root_calls: 0, root_bytes: 0, child_calls: 0, after_restart: 0, child_after_restart: 0, coordinator_calls: 0, coordinators_done: 0 };
 const children = new Map();
 const wrapped = new Map();
 let firstCall = null, lastCall = null, restartedAt = null, firstAfterRestart = null, doneCalls = 0;
@@ -150,9 +159,23 @@ const provider = async request => {
   const uses = new Map(messages.flatMap(message => Array.isArray(message.content) ? message.content.filter(block => block.type === "tool_use").map(block => [block.id, wrapped.get(block.id) ?? block.name]) : []));
   const answeredText = answered.map(block => typeof block.content === "string" ? block.content : text(block.content)).join("\n");
   const running = /Script running with cell ID (\S+?)[.\s"\\]/.exec(answeredText + " ");
+  const coordinate = SHARD > 0 ? /COORDINATE (\d+) FROM (\d+)\./.exec(first) : null;
+  if (coordinate) {
+    if (!hedge) provider_counts.coordinator_calls++;
+    if (running) return use(input, "wait", { cell_id: running[1], yield_time_ms: 30000 });
+    if (answeredText.includes("coordinated ")) return invoke(input, "parent__submit_result", { output: "coordinated " + coordinate[1] });
+    if (answered.length) {
+      if (answeredText.includes("accepted") && !hedge) provider_counts.coordinators_done++;
+      return reply(input, "done");
+    }
+    const asked = trailing.map(message => text(message.content)).filter(Boolean).join("\n");
+    if (asked.includes("<subagent_completion") || asked.includes("Subagent ")) return reply(input, "ack");
+    return use(input, "exec", { code: spawnCell(Number(coordinate[1]), Number(coordinate[2]), true) });
+  }
   const child = /Your agent ID is ([^\s.]+)\./.exec(first);
   if (child) {
-    const id = child[1];
+    const leaf = SHARD > 0 ? /Return the string ok-(\d+)\./.exec(first) : null;
+    const id = leaf ? leaf[1] : child[1];
     const entry = children.get(id) ?? { first: now, done: null, calls: 0, positions: new Set(), repeated: 0 };
     children.set(id, entry);
     if (!hedge) {
@@ -170,7 +193,8 @@ const provider = async request => {
       if ((uses.get(answered[0].tool_use_id) ?? "").endsWith("submit_result") || answeredText.includes("accepted")) { entry.done ??= now; if (!hedge) doneCalls++; }
       return reply(input, "done");
     }
-    const name = (input.tools ?? []).map(entry => entry.name).find(name => name === "submit_result" || name?.endsWith("__submit_result")) ?? "submit_result";
+    const names = (input.tools ?? []).map(entry => entry.name);
+    const name = names.find(name => name === "submit_result") ?? names.find(name => name?.endsWith("__submit_result") && name !== "parent__submit_result") ?? "submit_result";
     return invoke(input, name, { output: "ok" });
   }
   if (!hedge) provider_counts.root_calls++;
@@ -179,6 +203,7 @@ const provider = async request => {
   const prompt = trailing.map(message => text(message.content)).filter(Boolean).join("\n");
   if (answered.length) return reply(input, "spawned");
   if (prompt.includes("<subagent_completion")) return reply(input, "ack");
+  if (prompt.includes("HILLCLIMB") && SHARD > 0) return use(input, "exec", { code: spawnCell(AGENTS, 0, false) });
   if (prompt.includes("HILLCLIMB")) {
     const code = "const n = " + AGENTS + ", b = " + BATCH + "; for (let i = 0; i < n; i += b) { await Promise.all(Array.from({ length: Math.min(b, n - i) }, (_, j) => tools.spawn_agent({ role: 'worker', task: 'Return the string ok-' + (i + j) + '.', harness: null, model: null, thinking: null, reasoning_mode: null, output_contract: { kind: 'string' } }))); } text('spawned ' + n);";
     return use(input, "exec", { code });
@@ -269,8 +294,8 @@ const sampler = setInterval(async () => {
 
 async function kill() {
   const listing = await completedIds();
-  killedDone = listing.completed;
-  for (const id of listing.ids.filter(id => !killedDone.has(id))) inFlightAtKill.add(id);
+  killedDone = SHARD > 0 ? new Set([...children].filter(([, entry]) => entry.done !== null).map(([id]) => id)) : listing.completed;
+  for (const id of SHARD > 0 ? [...children.keys()] : listing.ids) if (!killedDone.has(id)) inFlightAtKill.add(id);
   const spawnedBefore = listing.all;
   const m = await metrics().catch(() => null);
   if (m) carried = { requests: carried.requests + (m.requests ?? 0), child_requests: carried.child_requests + (m.child_requests ?? 0), rows_written: carried.rows_written + (m.sql?.rows_written ?? 0) };
@@ -304,7 +329,7 @@ try {
     await until(() => firstAfterRestart !== null, "no model call after restart");
     restart.first_call_ms = Math.round(firstAfterRestart);
   }
-  await until(async () => (await completedIds()).completed.size >= AGENTS, "children did not all finish");
+  await until(async () => (await completedIds()).completed.size >= ROOT_CHILDREN && (SHARD === 0 || doneCount() >= AGENTS), "children did not all finish");
   await until(async () => ["completed", "failed", "cancelled"].includes((await (await request(base + "/turns/hillclimb")).json()).status), "root turn did not settle");
   report.wall_ms = Math.round(performance.now() - started);
   if (scenario === "done") {
@@ -325,8 +350,8 @@ try {
   report.listed = final.all;
   const repeats = [...children].filter(([id, entry]) => entry.repeated > 0 && !inFlightAtKill.has(id)).length;
   report.gate = {
-    pass: final.completed.size === AGENTS && final.all === AGENTS && repeatedDone === 0 && repeats === 0 && (scenario === "score" || report.restarts.every(restart => restart.listed >= restart.spawned_before)) && (scenario !== "done" || provider_counts.child_after_restart === 0),
-    lost: AGENTS - final.completed.size,
+    pass: final.completed.size === ROOT_CHILDREN && final.all === ROOT_CHILDREN && (SHARD === 0 || [...children.values()].filter(entry => entry.done !== null).length === AGENTS) && repeatedDone === 0 && repeats === 0 && (scenario === "score" || report.restarts.every(restart => restart.listed >= restart.spawned_before)) && (scenario !== "done" || provider_counts.child_after_restart === 0),
+    lost: SHARD > 0 ? AGENTS - [...children.values()].filter(entry => entry.done !== null).length : AGENTS - final.completed.size,
     repeated_after_done: repeatedDone,
     repeated_outside_in_flight: repeats,
     child_calls_after_restart: provider_counts.child_after_restart,
