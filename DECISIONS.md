@@ -685,3 +685,27 @@ No arm meets the condition for a change (warm within +50 ms, or clearly closer w
 ## 2026-11-14: scripts/hillclimb.mjs lists through pages with --page
 
 `--page <n>` makes every listing of a scenario (the listing at a kill and the listing after the restart) read `GET /subagents?limit=<n>&after=<id>` page by page until `next_after_agent_id` is null, and each restart records `list_first_ms`, the time to the first page, which the score reports as `restart_list_first_ms` beside `restart_list_ms` (2026-11-14, Nanocode 1.0 bug 6: restart of a 10K-child parent). Without `--page`, a listing stays one unpaged GET and `list_first_ms` equals `list_ms`. Paging needs nanocode-ts with the agents page (`AgentRuntime.subagents.agentsPage`). On the saved 10K snapshot (`output/snap-prof.mjs` with `SNAP_LOAD=output/snap-base-10k` and `LIST_LIMIT=100`), the 100 pages of 10,000 agents took 551,574 ms (median 5,535 ms per page) while about 5,000 resumed children ran, and the first page took 5,478 ms against 5,507 ms for one unpaged GET of the same build, so `--page` measures the time to a first answer that a paged client sees, and a full paged listing under load is far slower than one unpaged GET.
+
+## 2026-11-14: provider request from the edge Worker, measured and not adopted
+
+The 8397f938 warm gate left the client first delta at +260/+252 ms (haiku-5-5, turns 2 and 3) and +130/+228 ms (sonnet-5-5) over native from gak-9, against a gate of +50 ms. This trial tested whether a provider request that leaves from the edge Worker closes that gap. A scratch Worker `gk2-edge` on tempo-dev (AI binding through the `default` gateway, a cached 12,709-token system prefix, one SQLite session object per session by name) ran three arms in one interleaved rotation from gak-9 (SJC edge), 20 three-turn sessions per arm and model, 360 turns, 0 errors, every reply correct:
+
+- `obj`: the production shape. The Worker forwards the turn to the object, the object commits admission (row, alarm, `sync`), dispatches and relays deltas back through the Worker.
+- `edge`: the Worker builds the request from the cached prefix and dispatches at once. In parallel it sends the turn to the object, which commits an `edge-dispatched` row. The Worker holds the first delta until that commit returns, tees the provider stream and sends one branch to the object to record.
+- `frame`: the object commits a `dispatching` row and returns the prepared request as its answer. The Worker then dispatches and streams as in `edge`.
+
+Warm client first delta, p50 ms (native from `g9-8397-1504`, the difference in parentheses). Relay is the client first delta minus the provider first delta at the dispatcher.
+
+| model, turn | native | obj | edge | frame | relay obj / edge |
+| --- | --- | --- | --- | --- | --- |
+| haiku, 2 | 575 | 1,096 (+521) | 966 (+391) | 1,162 (+587) | 76 / 46 |
+| haiku, 3 | 600 | 1,176 (+576) | 700 (+100) | 1,206 (+606) | 83 / 41 |
+| sonnet, 2 | 759 | 1,098 (+339) | 1,047 (+288) | 1,073 (+314) | 78 / 44 |
+| sonnet, 3 | 794 | 1,153 (+359) | 1,054 (+260) | 1,064 (+270) | 84 / 40 |
+
+- The edge arm never waited on admission: the object commit returned 44 to 46 ms p50 (64 to 67 ms p90) after dispatch, and the hold before the first delta was 0 ms in all 120 warm edge turns. A held first delta costs nothing at a provider first delta of 600 ms or more.
+- The structural saving of the edge arm is the Worker to object hop before dispatch plus about 35 to 40 ms of relay per first delta, so about 80 ms on a warm turn. The rest of the haiku differences (130 and 476 ms) is provider variance: the provider first delta at the edge was 924 and 672 ms p50 for the two haiku turns of the same arm.
+- `frame` gains nothing over `obj` (sonnet -25 to -89 ms, haiku +30 to +66 ms), because the object hop stays on the dispatch path.
+- Through the AI binding the provider first delta at the dispatcher (670 to 1,040 ms p50) is already above native's whole first delta, so no arm here can reach +50 ms. Production calls `api.anthropic.com` directly (`m_first` 615/635 ms haiku in the 8397f938 rows). With the 80 ms saving, production would move to about +180/+170 ms (haiku) and +50/+150 ms (sonnet), and only the sonnet turn 2 cell reaches the gate.
+
+No arm meets the condition for a change, so nanocode-ts and this repository are unchanged and no durability design is recorded. The remaining warm gap is in the provider leg from Cloudflare, not in the object, and a change of the dispatch site cannot remove it. The scratch Worker is deleted. The raw rows and scripts are in `~/nc-release/gk2/edge` on gak-9 (`out-haiku/p.jsonl`, `out-sonnet/p.jsonl`, `index.ts`, `probe.mjs`, `an.mjs`, `d.mjs`).
