@@ -714,3 +714,44 @@ No arm meets the condition for a change, so nanocode-ts and this repository are 
 ## 2026-11-14: scripts/probe2.ts for cold first turns
 
 - `node scripts/probe2.ts <base URL> [--sessions 100] [--providers claude,codex] [--claude <model>] [--codex <model>] [--concurrency 1] [--gap 250] [--label <name>]` (Node 22.18 or newer, the owner token in `WORKER_TOKEN`) sends the first turn of `--sessions` new sessions per provider, interleaved by index, as `POST /sessions/<new>/turns?live=1` with `accept: text/event-stream`. Each sample keeps the whole result `timing` object, every `name;dur=` entry of the response header and of the stream's leading `: server-timing` comment (`object_*`, `pool_*`, `session*`, `worker`), and `dispatch_ms` (the first `model_requests` `started_ms`, turn arrival in the session object to the provider request), `runtime_open_ms`, `pump_wait_ms` and the `sdk.open` span. It prints p50/p90/p99 of each value per provider and writes the samples to `output/probe2-<label>-<time>.json`. Checked against local workerd with a mock provider (3 sessions per provider, 0 errors). The owner token skips the public rate limit of 30 requests a minute, which 100 sessions per provider would exceed.
+
+## 2026-11-15: the Claude provider leg from Cloudflare against native, measured, direct dispatch not adopted
+
+The 8397f938 warm gate left the client first delta at +260/+252 ms (haiku-5-5, turns 2 and 3) and +130/+228 ms (sonnet-5-5) over native from gak-9. This entry measures the provider leg alone. Production sends Claude through `Gateway.create`: the AI binding with the `nanocode-cloudflare-durable` gateway and unified billing (the model diagnostic says `transport: unified`), not a direct request to `api.anthropic.com`. The native lane of the gate uses a Claude subscription login (OAuth), so the two lanes reach Anthropic with different credentials.
+
+Two scratch Workers on tempo-dev (`gk2-leg` and `gk2-leg3`, custom domains under nanocode.xyz, deleted after the runs) sent the same cached 12,643-token prefix (13,095 with the subscription identity block) from one SQLite session object per session, or from the edge Worker. gak-9 sent the same request with Node `fetch` (keep-alive, one process per session). Every warm turn read the cache. Arms rotated per index, 20 three-turn sessions per model and run, 0 errors in 1,200 turns (2026-11-14, 16:38 to 17:22 PST). The direct OAuth arms used the gak-9 subscription token as a Worker secret. The `objk` arm used an Anthropic API key held in a scratch object. No value was printed.
+
+Warm (turns 2 and 3) provider first delta at the dispatcher, p50/p90 ms. Native is measured on gak-9 from `fetch` start.
+
+| arm | credential, path | haiku | sonnet |
+| --- | --- | --- | --- |
+| `ai` (run 1) | unified, AI binding, gateway `default` | 573/788 | 999/1,270 |
+| `ain` (run 1) | as `ai` with `skipCache`, `collectLog: false` | 613/869 | 999/1,421 |
+| `gw` (run 1) | OAuth, `AI.gateway().run` provider anthropic | 713/1,168 | 1,082/1,230 |
+| `obj` (run 1) | OAuth, direct from the object | 475/658 | 1,173/1,370 |
+| `edge` (run 1) | OAuth, direct from the edge Worker | 449/604 | 1,134/1,286 |
+| native (run 1) | OAuth, gak-9 | 590/812 | 1,239/1,456 |
+| `aip` (run 2) | unified, AI binding, production gateway | 639/976 | 971/1,157 |
+| `obj` (run 2) | OAuth, direct from the object | 412/616 | 1,093/1,298 |
+| `objk` (run 2) | API key, direct from the object | 609/784 | 1,208/1,308 |
+| native (run 2) | OAuth, gak-9 | 547/772 | 1,241/1,377 |
+
+- The credential sets the leg, not the network path. With the same credential, the Worker is at or below native: OAuth from the object is 135 to 178 ms faster than native for haiku and 66 to 148 ms faster for sonnet. Across credentials the order changes per model: for haiku, OAuth is 160 to 230 ms faster than unified billing or the API key, and for sonnet, unified billing is 100 to 240 ms faster than OAuth and the API key.
+- A direct API-key request from the object against the AI binding through the production gateway is -30 ms for haiku and +237 ms for sonnet. Skipping the gateway is therefore not a fix. The gateway hop itself is small. `ain` shows no gain from the gateway options.
+- Connection setup is not on the Worker path. The first fetch of a new object or isolate (`served` 1) has the same provider TTFB as later ones (obj turn 1 479 against warm 475 ms for haiku). `api.anthropic.com` is a Cloudflare zone, so a subrequest enters it in the colo of the dispatcher: the `cf-ray` of every direct response names the object colo (SJC or LAX) or the edge colo (SJC). Native pays about 110 ms for TCP and TLS on its first request (turn 1 701 to 712 against warm 547 to 590 ms).
+- The AI binding hides the egress colo: its responses carry only `cf-aig-*` headers. Its first call in a new object costs 1.5 to 1.8 s p50 to first delta against 0.4 to 0.5 s direct. Production already starts that call early through `/warm` and `/prime`.
+- Response headers and the first delta arrive in the same read on every Worker arm (TTFB equals first delta), so body size and compression do not change the leg here.
+
+nanocode-ts 5785269 (build-5785269) added `anthropicApiKey` to `Gateway.create`, and this repository 1f337a0 passed an optional `ANTHROPIC_API_KEY` secret to it. Version 860c34d8 (with `nanocode-python` 8e001c30) was deployed from gak-9 with the deploy lock. The secret is not set, so the egress is unchanged. `probe.ts --sessions=4` from gak-9 completed 16 of 16 three-turn sessions (48 turns, 0 errors). After the `objk` result, nanocode-ts f72970c reverted the option and this commit removes its use. Version 860c34d8 still runs the inert option until the next deploy.
+
+The gak-9 gate on 860c34d8 (`g9-860c`, 20x3 per model, interleaved, 0 errors), native e2e against Worker client first delta, p50 (p99):
+
+| model, turn | native | Worker | difference |
+| --- | --- | --- | --- |
+| haiku, 2 | 513 | 708 | +195 (-370) |
+| haiku, 3 | 538 | 709 | +171 (+596) |
+| sonnet, 2 | 741 | 884 | +143 (+211) |
+| sonnet, 3 | 756 | 837 | +81 (+766) |
+
+No warm cell meets +50 ms. The rest of the gap is the difference between the Anthropic latency for a subscription request and for a unified-billing request, plus the object relay of about 65 ms. A change in this repository cannot remove it. A fair gate compares lanes with the same credential: a Worker session on the plan payer (the same subscription) against native, or native with an API key against the deployment payer. The raw rows and scripts are in `~/nc-release/gk2/leg`, `~/nc-release/gk2/leg3` and `~/nc-release/gk2/g9-860c` on gak-9 (`out-*/p.jsonl`, `index.ts`, `probe.mjs`, `run.sh`, `an.mjs`, `gate-an.mjs`).
+
