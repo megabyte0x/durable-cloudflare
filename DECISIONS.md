@@ -755,3 +755,38 @@ The gak-9 gate on 860c34d8 (`g9-860c`, 20x3 per model, interleaved, 0 errors), n
 
 No warm cell meets +50 ms. The rest of the gap is the difference between the Anthropic latency for a subscription request and for a unified-billing request, plus the object relay of about 65 ms. A change in this repository cannot remove it. A fair gate compares lanes with the same credential: a Worker session on the plan payer (the same subscription) against native, or native with an API key against the deployment payer. The raw rows and scripts are in `~/nc-release/gk2/leg`, `~/nc-release/gk2/leg3` and `~/nc-release/gk2/g9-860c` on gak-9 (`out-*/p.jsonl`, `index.ts`, `probe.mjs`, `run.sh`, `an.mjs`, `gate-an.mjs`).
 
+
+## 2026-11-15: the warm gate is same-credential Worker minus native at +50 ms p50
+
+nanocode-ts build-e994fcf (nanocode-ts e994fcf, SDK 13e49f790, WASM build 41eca7b82141a67c68ef) drops the reverted `anthropicApiKey` option of `Gateway.create`. This repository 519d210 pins it. `npm run build` and `npm run dry-run` passed on gak-9. Version 1e696f38 (with `nanocode-python` b8f475c5) was deployed from gak-9 with the deploy lock, and `probe.ts --sessions=4` from gak-9 completed 16 of 16 three-turn sessions (48 turns, 0 errors). Version 860c34d8 and its inert option are gone.
+
+The 860c34d8 gate compared lanes with different credentials: the Worker on unified billing and native on a Claude subscription login. The provider leg depends on the credential class by 100 to 500 ms, which is more than the whole Worker overhead. A gate across credentials therefore measures Anthropic, not this repository. The gate is now:
+
+- Worker minus native client first delta, p50, on warm turns (2 and 3), at or below +50 ms, for claude-haiku-5-5 and claude-sonnet-5-5.
+- Both lanes use the same credential. The lane that decides is the Claude subscription: native nanocode signed in to the plan against a Worker session on the `plan` payer of the same plan.
+- p99 and turn 1 are reported and do not decide.
+
+`gk2/same/quad.sh` on gak-9 ran four arms in one rotation per index, 20 three-turn sessions per model, 960 turns, 0 errors, every reply correct (2026-11-14, haiku 18:09 to 18:27 PST, sonnet 18:27 to 18:46 PST). Each arm used the same prompt and model with the default effort:
+
+- `nk`: native nanocode with an Anthropic API key (`NANOCODE_ANTHROPIC_API_KEY`, `NANOCODE_ANTHROPIC_BASE_URL`).
+- `w`: production 1e696f38, deployment payer (unified billing).
+- `no`: native nanocode with the gak-9 subscription login.
+- `wp`: a scratch copy of this Worker at 519d210 (`gk2-planb`, custom domain `gk2-planb.nanocode.xyz`, no relay container), `plan` payer. Its `PlanVault` answered the token exchange with the gak-9 access token, so the sign-in passed the real profile check and no refresh token was used or rotated. The Worker, its KV namespace and the secrets are deleted.
+
+Client first delta, ms, p50/p99. Native is Enter to the first glyph, the Worker is the request to the first `assistant.delta`.
+
+| model, turn | `no` | `wp` | `wp` - `no` | `nk` | `w` | `w` - `nk` |
+| --- | --- | --- | --- | --- | --- | --- |
+| haiku, 1 | 797/1,633 | 2,309/3,384 | +1,512/+1,751 | 888/1,361 | 2,231/3,468 | +1,343/+2,107 |
+| haiku, 2 | 580/1,454 | 622/2,026 | +42/+572 | 679/1,680 | 946/2,501 | +267/+821 |
+| haiku, 3 | 617/1,506 | 590/1,576 | -27/+70 | 644/1,422 | 905/2,186 | +261/+764 |
+| sonnet, 1 | 822/1,052 | 2,862/3,811 | +2,040/+2,759 | 1,346/1,747 | 2,281/3,339 | +935/+1,592 |
+| sonnet, 2 | 789/1,576 | 862/1,621 | +73/+45 | 1,299/1,499 | 889/1,937 | -410/+438 |
+| sonnet, 3 | 797/1,492 | 909/1,868 | +112/+376 | 1,296/1,790 | 861/1,847 | -435/+57 |
+
+- Gate result: haiku passes (+42, -27). Sonnet fails by 23 and 62 ms (+73, +112).
+- The Worker overhead above the provider first byte (client first delta minus `m_first`, warm p50) is 104 to 119 ms on the plan payer and 174 to 179 ms on the deployment payer. The provider first byte at the object is 454 (haiku) and 738 ms (sonnet) on the plan, against 645 and 699 ms on unified billing.
+- `w` against `nk` is not a same-credential pair. Unified billing reaches Anthropic with Cloudflare's credential, not the API key of the native lane. The API key is slow for sonnet: `nk` is 499 to 524 ms above `no` for sonnet and 27 to 99 ms above for haiku, which matches the `objk` arm of the provider leg trial. This pair is reported for reference only.
+- Turn 1 includes the cold session object and the first provider connection, outside this gate.
+
+The rest of the sonnet gap is the object relay and dispatch of about 100 ms against a provider leg that is 50 ms faster from Cloudflare. The next change that can close it removes a hop from the relay path, such as the vault RPC on each plan request or the object to Worker frame relay. The raw rows and scripts are in `~/nc-release/gk2/same` on gak-9 (`gate/haiku`, `gate/sonnet`, `quad.sh`, `pair.sh`, `an.mjs`, `wprobe-plan.mjs`, `verify-1e696f38.jsonl`).
