@@ -18,6 +18,7 @@ interface Env extends Machines.Env {
   AI: Ai;
   ASSETS: Fetcher;
   AI_GATEWAY_ID: string;
+  ANTHROPIC_API_KEY?: string;
   OPENAI_SERVICE_TIER: string;
   MODEL_FIRST_BYTE_MS?: string;
   ACCESS_TOKEN_SHA256: string;
@@ -119,7 +120,7 @@ const wallets = Wallets.create<Env>({ account, scripts: true });
 
 const nanocode = App.create<Env>({
   authenticate,
-  egress: wallets.egress(env => Gateway.create(env.AI, { id: env.AI_GATEWAY_ID, serviceTier: env.OPENAI_SERVICE_TIER, firstByteMs: Number(env.MODEL_FIRST_BYTE_MS) || undefined })),
+  egress: wallets.egress(env => Gateway.create(env.AI, { anthropicApiKey: env.ANTHROPIC_API_KEY, id: env.AI_GATEWAY_ID, serviceTier: env.OPENAI_SERVICE_TIER, firstByteMs: Number(env.MODEL_FIRST_BYTE_MS) || undefined })),
   limits: session => session.provider === "claude" && session.model && !CLAUDE_MODELS.has(session.model) ? { max_tokens: Tempo.outputTokens } : undefined,
   payers: ["deployment", "plan", "wallet"],
   plans: { vault: env => env.PLANS, relay: env => env.RELAY, account },
