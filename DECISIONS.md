@@ -650,3 +650,35 @@ Hedge accounting was checked against the live stream, because the Worker exposes
 | gpt-6.1-sol | 111 | 15 (14 turn 1, 1 turn 2) | 14 hedges cancelled with 0 bytes, 1 primary cancelled with 0 bytes and the hedge won | 1,2,11,14,18 and 19,20,29,32,36, the same as unhedged turns | input tokens twice (25,582 against 12,790), cost of both |
 
 Each hedged turn has the gaps of one `model.call.started` and one `model.call.completed`, so the loser adds no model call or attempt event, and no persisted event refers to it. Every loser ends with 0 response bytes. The duplicate input in usage and cost is the policy of nanocode 1d4463636 ("added to the call's estimated cost (Claude) and to the run's usage and cost (Codex)"), not a second count of the loser. The two backends differ: Claude adds the duplicate only to the cost, and Codex also adds it to the input token counts. The gpt-6.1-sol hedge fired on 14 of 37 cold turns at the 1,500 ms floor (`started_ms` 1,586 to 1,944), and the primary won all 14 within 1,268 to 1,605 ms of its start, so each of those turns paid for the duplicate input without a faster first token. The `x-nanocode-hedge` marker is not visible in production: the Claude gateway forwards only its allowed headers to the AI binding, and the Codex marker is in `client_metadata` of the body. The nanocode simulator (`model_call_duplicated`, mutation `hedge-unmarked`) and `scripts/hillclimb.mjs` check it locally. The gate's own Worker lane also hedged 2 of 60 haiku turns (provider request 1,508 and 1,636 ms after admission), and both turns completed with one reply.
+
+
+## 2026-11-14: session object placement near the client, measured and not adopted
+
+The 8397f938 gate left a warm gap of +130 to +260 ms p50 from gak-9, and the client reads the first session object frame 120 to 140 ms after the Worker headers. This entry measures whether an object near the client closes that gap now that no storage commit precedes the provider request.
+
+A scratch Worker (`gk2-place` on tempo-dev, custom domain `gk2-place.nanocode.xyz` so that gak-9 reaches it through SJC, deleted after the run) models the warm path of this Worker: the session object starts the AI binding request (`ai.run('anthropic/<model>', ..., { gateway: { id: 'default' }, returnRawResponse: true })`, a cached 12K token system prompt) before it writes the turn row and the alarm, and the output gate holds its first frame until that commit. Warm turns go from the Worker straight to the bound object, as a binding cache hit does here. Four arms:
+
+- central: a pool object (`locationHint` enam) starts the session objects, which then sit near the pool, and forwards the first turn. The objects landed in IAD and EWR, the same distance from SJC as production objects (ping 73 to 82 ms p50).
+- region: the same central pool keeps ready objects per region, started with the `locationHint` that `request.cf` gives (wnam for gak-9), and forwards the first turn. Objects landed in DFW, SJC, SEA, DEN and LAX.
+- regiond: like region, but the Worker resolves the binding at the pool and sends the first turn to the object itself.
+- nopool: `idFromName` from the Worker with no hint, so the first request starts the object near SJC (SJC and LAX).
+
+`gk2/place/run.sh` on gak-9 ran 20 three-turn sessions per arm and model, with the arm order rotated per index (claude-haiku-5-5 15:33 to 15:48 PST, claude-sonnet-5-5 15:49 to 16:04 PST, 480 turns, 0 errors). Values are ms, p50 except where marked. The overhead is client first delta minus the provider first delta at the object, so it holds every hop except the provider.
+
+| model, arm | warm t2 / t3 client first delta | warm overhead p50/p90 | Worker to object ping | provider first delta at the object (warm) | cold t1 first delta p50/p99 | cold overhead p50/p99 | cold headers p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| haiku, central | 735 / 734 | 134/160 | 73 | 597 | 1,867/3,238 | 311/385 | 670 |
+| haiku, region | 736 / 723 | 91/138 | 31 | 617 | 2,199/3,408 | 387/898 | 887 |
+| haiku, regiond | 697 / 701 | 94/122 | 35 | 608 | 2,156/3,255 | 439/501 | 814 |
+| haiku, nopool | 744 / 773 | 76/96 | 13 | 684 | 2,386/3,768 | 374/479 | 483 |
+| sonnet, central | 1,074 / 1,101 | 145/193 | 77 | 939 | 2,216/3,034 | 336/418 | 598 |
+| sonnet, region | 1,053 / 1,050 | 109/161 | 36 | 930 | 2,099/5,872 | 384/4,332 | 4,347 |
+| sonnet, regiond | 1,030 / 1,040 | 85/138 | 26 | 951 | 2,344/3,614 | 448/1,289 | 1,350 |
+| sonnet, nopool | 1,061 / 1,049 | 82/145 | 15 | 969 | 2,217/2,928 | 386/448 | 523 |
+
+- An object near the client removes 40 to 60 ms of warm overhead (134 to 94 and 145 to 85 ms p50), less than the 120 to 140 ms that the first frame shows, because the Worker to object hop of a central object is about 75 ms and not two full continental crossings.
+- The provider is farther from a western object. The provider first delta at the object rises by 0 to 87 ms p50 (haiku 597 to 608 to 684, sonnet 939 to 951 to 969), so the client first delta improves by 33 to 61 ms at best (regiond) and gets worse with nopool for haiku. The best arm would move the gate from +260/+252 to about +220/+215 (haiku) and from +130/+228 to about +85/+170 (sonnet), and no cell reaches +50.
+- Commits are no longer on the dispatch path and western commits are not slower here (warm commit 13 to 17 ms against 10 ms central), so the earlier shard result now comes from the provider distance, not from storage.
+- Cold turns get worse in every placement arm: overhead +50 to +130 ms p50, and p99 up to 4,332 ms (one sonnet region turn spent 4.1 s before the object answered). A first turn needs the central binding and then a western object, which adds a hop that a central object does not have. In production the cold header gate holds (the Worker returns headers before admission), but the cold first delta takes this cost. The nopool cold numbers come from a 10 KiB scratch bundle. This Worker's 49,366 KiB bundle starts a new object in 599 to 1,013 ms (the cold start entry above), so nopool in production would add that to every first turn that `Transport.warm` did not start first.
+
+No arm meets the condition for a change (warm within +50 ms, or clearly closer without a worse cold first delta), so nanocode-ts and this repository are unchanged. The remaining warm gap is the provider path: an object in eastern North America is near the provider and far from SJC, and a western object is the reverse. Only a provider request that leaves from the edge Worker, with the session object reading its stream after admission, takes both hops off the first delta path. The raw rows and scripts are in `~/nc-release/gk2/place` on gak-9 (`out-haiku/p.jsonl`, `out-sonnet/p.jsonl`, `index.ts`, `probe.mjs`, `an.mjs`).
