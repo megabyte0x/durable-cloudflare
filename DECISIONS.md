@@ -819,3 +819,44 @@ The gate pair on build-3dbd05b (`gk2-planb` rebuilt on 186f135's dependency with
 
 The sonnet turn 3 cell now depends on the provider leg, which varied by 170 ms p50 between turns 2 and 3 of the same sessions. The remaining structural cost is the edge to object round trip and the first-delta relay, about 70 ms. The scratch Worker `gk2-planb`, its KV namespace and secrets, and the local key files are deleted. The raw rows and scripts are in `~/nc-release/gk2/hop` on gak-9 (`ab1`, `gate2`, `gate3`, `prof1`, `prof2`, `tri.sh`, `pair2.sh`, `wprobe-prof.mjs`, `an.mjs`, `an2.mjs`, `br.cjs`, `verify-633ba4ba.jsonl`).
 - `scripts/hillclimb.mjs --shard K` (2026-11-15, Nanocode 1.0 durability track, bet-shard lane). With K above 0 the root spawns clamp(ceil(N / K), 1, K) coordinators with the task `COORDINATE n FROM s`. A coordinator spawns n leaves when n is K or less, else clamp(ceil(n / K), 1, K) sub-coordinators, waits for each id with `wait_agent`, and reports through `parent__submit_result`. K is a command-line value, the same host policy as `--shard` in the native harness. Leaves are keyed by their global index, so lost counts leaves, and the root listing is checked against the root fan-out. Measured on one m4-metal-large box with the nanocode-ts `remoteCoordinators` bundle (`maxConcurrentSubagents` 64, `remoteSubagents`, `remoteCoordinators`), rate 200: `--agents 2000 --shard 50` 29.8 s, 40 coordinators, lost 0, root peak 11.6 MB, 78 root request bytes per leaf, `cloudflare_usd_per_10k` 0.22. `--agents 10000 --shard 100` 120.9 s, 100 coordinators, lost 0, root peak 15.8 MB, 26 root request bytes per leaf, 0.08 root rows written per leaf, saturation 0.853, `cloudflare_usd_per_10k` 0.23. The 2,000-leaf crash gate (K 50, `--limit 240`) passes `done` (kill after all leaves: restart ready 812 ms, listing 8 ms, 0 calls after the restart, lost 0, repeated 0) and fails `spawn` and `turn` with `children did not all finish`: after a kill during spawn (ready 774 ms, listing 5,237 ms, first call 5,959 ms) all 40 coordinators finish but 3,934 of 4,000 leaf calls arrive, and after a kill during the turn (ready 813 ms, listing 3,238 ms) 43 coordinator completions arrive for 40 coordinators and 3,896 leaf calls. The native harness (bet-shard2 lane NOTES.md) shows the cause on the SDK side: a restored remote child is respawned under a new session id, so its object and its log are orphaned and its subtree runs again or is lost. Default 0 keeps the in-object run unchanged.
+
+## 2026-11-15: the same-credential warm gate passes on build-3dbd05b over three windows
+
+The single gate pair on build-3dbd05b missed sonnet turn 3 by 14 ms, and its provider first byte varied by 170 ms between turns 2 and 3. This entry repeats the pair in three windows to separate the Worker from the provider leg. Production plan sign-in exchanges a real authorization code with Anthropic, so it cannot take the gak-9 subscription token without a browser login. The runs therefore used a scratch copy of the deployed Worker: `gk2-planb` (custom domain `gk2-planb.nanocode.xyz`, no relay container), the worker code of 186f135 with the seeded `PlanVault` of the gate entry above, nanocode-ts build-3dbd05b from the same lock entry. The vault answered the token exchange with the gak-9 access token, so no refresh token was used or rotated.
+
+`gk2/conf/win.sh` on gak-9 (Apple M1 Max, SJC edge) ran each window as 20 indexes. Each index ran one haiku pair and one sonnet pair, and the lane order rotated per index and model. A pair is one native nanocode session (`run-mac.ts --live --lanes=live-nc-claude@native`, gak-9 subscription login) and one Worker session on the `plan` payer (`hop/wprobe-prof.mjs`), 3 turns each with the prompt of the earlier gate entries. Windows ran on 2026-11-14 PST: w1 20:27 to 20:45, w2 21:05 to 21:22, w3 21:42 to 21:59, with 20 minutes between windows. The run had 720 turns, 0 errors, and every Worker reply was correct. Native sonnet warm p50 was 788 to 880 ms and native haiku was 520 to 612 ms in every window, the subscription level of the earlier entries, so no window was thrown out.
+
+Client first delta, warm turns, ms. Native is Enter to the first glyph, the Worker is the request to the first `assistant.delta`. `m_first` is the provider first byte at the object. The overhead is the Worker first delta minus `m_first`, p50.
+
+| window, model, turn | native p50/p99 | Worker p50/p99 | Worker - native p50 | `m_first` p50 | overhead p50 |
+| --- | --- | --- | --- | --- | --- |
+| w1, haiku, 2 | 547/1,332 | 541/1,301 | -6 | 453 | 75 |
+| w1, haiku, 3 | 561/2,022 | 573/1,571 | +12 | 508 | 78 |
+| w1, sonnet, 2 | 833/1,275 | 737/1,441 | -96 | 652 | 73 |
+| w1, sonnet, 3 | 799/1,186 | 929/1,300 | +130 | 853 | 66 |
+| w2, haiku, 2 | 531/1,012 | 569/1,726 | +38 | 463 | 81 |
+| w2, haiku, 3 | 612/1,893 | 530/794 | -82 | 444 | 73 |
+| w2, sonnet, 2 | 880/1,362 | 763/1,753 | -117 | 651 | 83 |
+| w2, sonnet, 3 | 788/1,114 | 809/1,769 | +21 | 725 | 77 |
+| w3, haiku, 2 | 520/635 | 505/1,274 | -15 | 426 | 76 |
+| w3, haiku, 3 | 526/701 | 528/1,246 | +2 | 428 | 79 |
+| w3, sonnet, 2 | 844/1,088 | 781/1,264 | -63 | 687 | 83 |
+| w3, sonnet, 3 | 831/973 | 743/1,166 | -88 | 661 | 81 |
+
+Pooled over the three windows, 60 sessions per lane and model:
+
+| model, turn | native p50/p99 | Worker p50/p99 | Worker - native p50 | Worker - native p99 | `m_first` p50 | overhead p50 |
+| --- | --- | --- | --- | --- | --- | --- |
+| haiku, 1 | 732/2,140 | 2,608/4,260 | +1,876 | +2,120 | 622 | |
+| haiku, 2 | 531/1,332 | 541/1,726 | +10 | +394 | 449 | 81 |
+| haiku, 3 | 569/2,022 | 536/1,571 | -33 | -451 | 450 | 78 |
+| sonnet, 1 | 852/1,834 | 2,804/4,300 | +1,952 | +2,466 | 1,003 | |
+| sonnet, 2 | 846/1,362 | 768/1,753 | -78 | +391 | 666 | 81 |
+| sonnet, 3 | 802/1,186 | 811/1,769 | +9 | +583 | 732 | 77 |
+
+- The gate passes on all four pooled warm cells: haiku +10 and -33 ms, sonnet -78 and +9 ms.
+- One window cell misses: w1 sonnet turn 3 at +130 ms. Its overhead was 66 ms, the lowest of all cells, and its `m_first` was 853 ms against 652 ms on turn 2 of the same sessions. 13 of 15 w1 sonnet sessions had a slower provider first byte on turn 3 than on turn 2, with the same request shape (13.4K input tokens, 13,387 cached, about 50 cache-write tokens). The miss is in the provider leg, and w2 and w3 did not repeat it.
+- The overhead above the provider first byte is 66 to 85 ms p50 in every window and cell. Warm `admission_ms` and `m_start` are 1 ms, so the object does no work before the provider request. The rest is the edge to object round trip (`session_response` 45 to 51 ms p50) and the first-delta relay.
+- p99 and turn 1 do not decide. Warm Worker p99 is 391 to 583 ms above native for three cells, from single slow provider responses. Turn 1 includes the cold object and the first provider connection.
+
+The pooled sonnet turn 3 cell passes, so this entry changes no code. The scratch Worker, its KV namespace and its secrets are deleted, and the local visitor key file is removed. The raw rows and scripts are in `~/nc-release/gk2/conf` on gak-9 (`w1`, `w2`, `w3`, `win.sh`, `all.sh`, `an.mjs`, `setup.sh`, `signin.mjs`).
