@@ -790,3 +790,31 @@ Client first delta, ms, p50/p99. Native is Enter to the first glyph, the Worker 
 - Turn 1 includes the cold session object and the first provider connection, outside this gate.
 
 The rest of the sonnet gap is the object relay and dispatch of about 100 ms against a provider leg that is 50 ms faster from Cloudflare. The next change that can close it removes a hop from the relay path, such as the vault RPC on each plan request or the object to Worker frame relay. The raw rows and scripts are in `~/nc-release/gk2/same` on gak-9 (`gate/haiku`, `gate/sonnet`, `quad.sh`, `pair.sh`, `an.mjs`, `wprobe-plan.mjs`, `verify-1e696f38.jsonl`).
+## 2026-11-15: plan-payer warm turns skip both vault RPCs
+
+A profile of the plan payer on a scratch copy of 519d210 (`gk2-planb`, the `PlanVault` seeded with the gak-9 access token as in the gate entry above) found two `PlanVault` RPCs on the path of every warm turn, each from the session object:
+
+- `AgentSession.planned` called `PlanVault.signedIn` before each request of a session with a bound provider. It was all of `admission_ms` and `m_start` (17 to 25 ms p50), which the `object_*` laps (0 to 1 ms) did not cover.
+- `Egress.send` called `PlanVault.inject` before the provider request: 26 to 40 ms p50 and 81 to 109 ms p90 in `wrangler tail` logs of a timed copy of the binding (12 warm sonnet-5-5 turns per run).
+
+The rest of the overhead above the provider first byte is the edge to object round trip (`session_response` minus `session`, about 50 ms) and the relay of the first delta. The Worker relays the object's stream with `pipeTo` and re-encodes no frame, and the session request takes no pool hop (`session_resolve` 0, no `pool_*` entries). Neither has a change here.
+
+nanocode-ts 3dbd05b (build-3dbd05b, WASM build 736b7597dae6fe78df9c) removes both RPCs from the path. `planned` sets `subscription` without an RPC when the bound payer is `plan`, and nanocode-egress 654d587 dispatches with the last checked credential while `inject` checks the plan in parallel, aborting the request when the check throws. A first turn still checks `signedIn` before admission. A plan that signs out mid-session fails its next turn with the egress's 401 instead of a 403 at admission. Before the release, the same two changes behind a per-account switch on the scratch Worker (20 three-turn sessions per arm and model, interleaved with native, 0 errors) took warm `admission_ms` and `m_start` from 17 to 22 ms to 1 ms p50 in every cell.
+
+186f135 pins build-3dbd05b. Version 633ba4ba was deployed from gak-9 with the deploy lock (`npm run build` and `npm run dry-run` passed), and `hn/probe.ts --sessions=4` from gak-9 completed 16 of 16 three-turn sessions (48 turns, 0 errors).
+
+The gate pair on build-3dbd05b (`gk2-planb` rebuilt on 186f135's dependency with the seeded vault, `plan` payer, against native nanocode on the gak-9 subscription login, 20 three-turn sessions per model, interleaved, 240 turns, 0 errors, every reply correct, 2026-11-14 19:53 to 20:11 PST), client first delta p50/p99 ms:
+
+| model, turn | native | Worker | Worker - native | `m_start` | `m_first` | Worker - `m_first` |
+| --- | --- | --- | --- | --- | --- | --- |
+| haiku, 2 | 549/1,107 | 530/1,252 | -19/+145 | 1 | 446 | 82 |
+| haiku, 3 | 601/1,679 | 580/896 | -21/-783 | 1 | 491 | 71 |
+| sonnet, 2 | 830/1,114 | 742/1,336 | -88/+222 | 1 | 650 | 70 |
+| sonnet, 3 | 820/1,083 | 884/1,438 | +64/+355 | 1 | 818 | 71 |
+
+- Haiku passes both warm cells and sonnet passes turn 2. Sonnet turn 3 misses by 14 ms: its provider first byte at the object (818 ms p50) is as long as native's whole first delta (820 ms).
+- The Worker overhead above the provider first byte fell from 104 to 119 ms (1e696f38) to 70 to 82 ms, the size of the two RPCs.
+- Turn 1 is unchanged within noise (sonnet 2,870 against 2,862 ms, haiku 2,123 against 2,309 ms on 1e696f38).
+- A second sonnet run right after (`gate3`, 20 sessions) measured the Worker at 770/838 ms on turns 2 and 3 (`m_first` 697/761, overhead 77), but native rose to 1,343/1,333 ms in that run, the level of the API-key lane, so that run is not a same-credential comparison and does not count.
+
+The sonnet turn 3 cell now depends on the provider leg, which varied by 170 ms p50 between turns 2 and 3 of the same sessions. The remaining structural cost is the edge to object round trip and the first-delta relay, about 70 ms. The scratch Worker `gk2-planb`, its KV namespace and secrets, and the local key files are deleted. The raw rows and scripts are in `~/nc-release/gk2/hop` on gak-9 (`ab1`, `gate2`, `gate3`, `prof1`, `prof2`, `tri.sh`, `pair2.sh`, `wprobe-prof.mjs`, `an.mjs`, `an2.mjs`, `br.cjs`, `verify-633ba4ba.jsonl`).
