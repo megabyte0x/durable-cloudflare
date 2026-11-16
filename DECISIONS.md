@@ -1,5 +1,16 @@
 # Decisions
 
+The dependency moves to nanocode-ts build-af0f71b (SDK bae2d7fa6, 2026-11-16), the release after build-95de2ce, and `worker/` is unchanged. `npm run build` passed, `npm run dry-run` wrote `output/deploy/index.js` at 2,691,907 bytes with a 13,984,478-byte `nanocode_wasm.wasm` (13,952,282 on build-95de2ce) before it stopped at the relay container's Docker build, and `npm run drill` passed `charge` (one charge), `waiting` (one charge) and `deploys`. The local workerd run repeats the one for build-95de2ce below (five alternating rounds, mock provider, load average 6.0 to 18.8). Values are p50/p95 in ms, Claude then Codex:
+
+| measurement | build-95de2ce | build-af0f71b |
+| --- | --- | --- |
+| new session, server dispatch (50 each) | 76/106, 68/123 | 73/122, 75/99 |
+| new session, client POST to provider request | 164/451, 174/411 | 163/420, 158/247 |
+| new session after a workerd restart, server dispatch (15 each) | 98/195, 86/146 | 89/132, 79/182 |
+| session with history after a restart, first read (5 rounds, medians) | 26, 23 | 34, 24 |
+| same, first turn dispatch | 307, 315 | 286, 286 |
+| same, `sdk.open` | 130, 169 | 138, 149 |
+
 The dependency moves to nanocode-ts build-95de2ce (SDK f192991d1, 2026-11-16), the release after build-3dbd05b. The release adds opt-in session levers and changes no option this Worker passes, so `worker/` is unchanged. `npm run build` passed, `npm run dry-run` wrote `output/deploy/index.js` at 2,691,907 bytes (2,682,645 on build-3dbd05b) before it stopped at the relay container's Docker build, and `npm run drill` passed `charge` (one charge), `waiting` (one charge) and `deploys`. Local workerd measurements on one 5-core host (load average 8.5 to 14.5), five rounds that alternate the two bundles in `output/b-old` and `output/b-new`, each round `output/first-turn.mjs 10 claude,codex`, `output/first-turn.mjs 3 claude,codex restart` and `scripts/measure-cold-local.mjs --rounds 2`, with a mock provider. Values are p50/p95 in ms, Claude then Codex:
 
 | measurement | build-3dbd05b | build-95de2ce |
