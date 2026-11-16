@@ -16,7 +16,6 @@
     "skipLibCheck": true
   },
   "include": [
-    "worker/**/*.ts",
-    "python/*.ts"
+    "worker/**/*.ts"
   ]
 }

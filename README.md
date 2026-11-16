@@ -11,7 +11,7 @@
 </p>
 
 - **Durable.** Every model call and tool call is journaled. An object that resets mid-turn is started again by its alarm and continues from the last checkpoint.
-- **No sandbox.** Code Mode cells run beside the agent in the object: bash on a workspace kept in the same SQLite, git, Python on Pyodide and WebAssembly.
+- **No sandbox.** Code Mode cells run beside the agent in the object: bash on a workspace kept in the same SQLite, git, Python (nanocode-ts's python.wasm, in the same object) and WebAssembly.
 - **One module.** The runtime is [nanocode-ts](https://github.com/nanocodexyz/nanocode-ts), the Rust SDK compiled to WebAssembly. This repository holds the Worker, its tools and the page.
 
 ## Run It
@@ -20,7 +20,7 @@
 npm install
 npm run dev       # wrangler dev, at http://localhost:8787
 npm run drill     # Crash a turn midway and check that it resumes
-npm run deploy    # Deploy the Worker and its Python Worker
+npm run deploy    # Deploy the Worker
 ```
 
 Model requests go through the account's AI Gateway (`AI_GATEWAY_ID` in `wrangler.jsonc`). `DECISIONS.md` records what each change established, with its measurements.

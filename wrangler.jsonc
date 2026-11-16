@@ -17,7 +17,6 @@
       { "name": "HAND_RELAYS", "class_name": "HandRelay" },
       { "name": "PUBLIC_LIMITS", "class_name": "PublicLimit" },
       { "name": "MCP_LISTINGS", "class_name": "McpListings" },
-      { "name": "PYTHON", "class_name": "Pyodide", "script_name": "nanocode-python" },
       { "name": "WALLETS", "class_name": "Wallet" },
       { "name": "PLANS", "class_name": "PlanVault" },
       { "name": "RELAY", "class_name": "RelayContainer" },
@@ -35,7 +34,8 @@
     { "tag": "v8", "new_sqlite_classes": ["PlanVault", "RelayContainer"] },
     { "tag": "v9", "new_sqlite_classes": ["SessionPool"] },
     { "tag": "v10", "new_sqlite_classes": ["SessionShard"] },
-    { "tag": "v11", "deleted_classes": ["SessionShard"] }
+    { "tag": "v11", "deleted_classes": ["SessionShard"] },
+    { "tag": "v12", "deleted_classes": ["Python"] }
   ],
   "vars": {
     "AI_GATEWAY_ID": "default",
@@ -55,7 +55,6 @@
     "PROMPT_CACHE_PRIME_MS": "240000",
     "MCP_LISTING_CACHE_TTL_S": "86400",
     "RUNTIME_MEMORY_BUDGET_BYTES": "67108864",
-    "PYTHON_CPU_MS": "5000",
     "REMOTE_MAX_FRAME_BYTES": "1048576",
     "REMOTE_TIMEOUT_MS": "30000",
     "SESSION_POOL_BINDING_CACHE_S": "86400",
