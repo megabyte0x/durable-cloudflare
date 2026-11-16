@@ -27,6 +27,7 @@ export function Demo(props: { theme: Theme; title?: string }) {
       scripts
       storage="nanocode-cloudflare-durable"
       theme={props.theme}
+      thinking="none"
       {...(props.title ? { title: props.title } : {})}
       token={async () => !(await fetch("health").then(response => response.ok, () => false))}
       wallet={{ name: "nanocode on Cloudflare", relay: "api/device/", websiteUrl: "https://nanocode.xyz/cloudflare/" }}
