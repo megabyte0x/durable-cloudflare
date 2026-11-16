@@ -43,7 +43,7 @@ const DIGEST = /^[0-9a-f]{64}$/;
 const ACCOUNT = "owner";
 const PUBLIC_ACCOUNT = "public";
 const PUBLIC_PROMPT_CHARACTERS = 2000;
-const PUBLIC_ROUTE = /^\/(?:sessions\/[^/]+\/(?:turns(?:\/[^/]+(?:\/cancel)?)?|events|crash|warm|hands(?:\/[^/]+)?|files(?:\/.+)?)|v1\/(?:keys|me)|api\/device\/(?:register|token)|plans(?:\/(?:claude|codex)(?:\/(?:sign-in|complete))?)?)$/;
+const PUBLIC_ROUTE = /^\/(?:sessions\/[^/]+\/(?:turns(?:\/[^/]+(?:\/cancel)?)?|events|crash|warm|hands(?:\/[^/]+)?|files(?:\/.+)?|blobs\/[^/]+)|v1\/(?:keys|me)|api\/device\/(?:register|token)|plans(?:\/(?:claude|codex)(?:\/(?:sign-in|complete))?)?)$/;
 
 async function owner(request: Request, env: Env): Promise<boolean> {
   const header = request.headers.get("authorization") ?? "";
