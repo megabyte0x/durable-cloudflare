@@ -1,5 +1,7 @@
 # Decisions
 
+The dependency moves to nanocode-ts build-1ee1936 (SDK 92c9c22fa, 2026-11-16), the release after build-02d2a82, and `worker/` is unchanged. `npm run build` passed, and `npm run dry-run` wrote `output/deploy/index.js` at 2,692,110 bytes with a 14,036,280-byte `nanocode_wasm.wasm` (13,985,859 on build-02d2a82) before it stopped at the relay container's Docker build.
+
 The dependency moves to nanocode-ts build-02d2a82 (SDK 95291a918, 2026-11-16), the release after build-af0f71b, and `worker/` is unchanged. `npm run build` passed, `npm run dry-run` wrote `output/deploy/index.js` at 2,691,907 bytes with a 13,985,859-byte `nanocode_wasm.wasm` (13,984,478 on build-af0f71b) before it stopped at the relay container's Docker build, and `npm run drill` passed `charge` (one charge), `waiting` (one charge) and `deploys`. The local workerd run repeats the one for build-af0f71b below (five alternating rounds, mock provider, load average 5.3 to 8.0). Values are p50/p95 in ms, Claude then Codex:
 
 | measurement | build-af0f71b | build-02d2a82 |
