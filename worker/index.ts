@@ -41,7 +41,7 @@ const DIGEST = /^[0-9a-f]{64}$/;
 const ACCOUNT = "owner";
 const PUBLIC_ACCOUNT = "public";
 const PUBLIC_PROMPT_CHARACTERS = 2000;
-const PUBLIC_ROUTE = /^\/(?:sessions\/[^/]+\/(?:turns(?:\/[^/]+(?:\/cancel)?)?|events|crash|warm|hands(?:\/[^/]+)?|files(?:\/.+)?|blobs\/[^/]+)|v1\/(?:keys|me)|api\/device\/(?:register|token)|plans(?:\/(?:claude|codex)(?:\/(?:sign-in|complete))?)?)$/;
+const PUBLIC_ROUTE = /^\/(?:sessions\/[^/]+\/(?:turns(?:\/[^/]+(?:\/cancel)?)?|events|crash|warm|hands(?:\/[^/]+)?|files(?:\/.+)?|blobs\/[^/]+)|v1\/(?:keys|me)|api\/device\/(?:code|token)|plans(?:\/(?:claude|codex)(?:\/(?:sign-in|complete))?)?)$/;
 
 async function owner(request: Request, env: Env): Promise<boolean> {
   const header = request.headers.get("authorization") ?? "";
@@ -70,13 +70,7 @@ function refuse(error: string, status: number): Response {
   return Response.json({ error }, { status });
 }
 
-const DEVICE = "https://wallet.tempo.xyz/api/auth/device";
 const ARCHIVE = /^\/api\/github\/([\w.-]+)\/([\w.-]+)\/(.+)$/;
-
-async function relay(request: Request, pathname: string): Promise<Response> {
-  const response = await fetch(DEVICE + pathname.slice("/api/device".length), { body: await request.text(), headers: { accept: "application/json", "content-type": "application/json" }, method: "POST" });
-  return new Response(response.body, { headers: { "cache-control": "no-store", "content-type": response.headers.get("content-type") ?? "application/json" }, status: response.status });
-}
 
 async function archive(pathname: string): Promise<Response> {
   const match = ARCHIVE.exec(pathname);
@@ -103,7 +97,7 @@ async function admit(request: Request, env: Env): Promise<Response | undefined> 
   const planned = payer === "plan" || (payer === undefined && !fits && await onPlan(request, env, provider));
   const catalog = payer === "plan" ? PLAN_MODELS : planned ? { ...PUBLIC_MODELS, ...PLAN_MODELS } : PUBLIC_MODELS;
   const allowed = catalog[model];
-  if (!allowed || allowed.provider !== provider) return refuse(payer === "plan" ? `your plan serves ${Object.keys(catalog).join(", ")}` : `this deployment serves ${Object.keys(catalog).join(", ")}, and more on your Tempo Wallet or your own ChatGPT or Claude plan`, 403);
+  if (!allowed || allowed.provider !== provider) return refuse(payer === "plan" ? `your plan serves ${Object.keys(catalog).join(", ")}` : `this deployment serves ${Object.keys(catalog).join(", ")}, and more with Tempo ID or your own ChatGPT or Claude plan`, 403);
   if (body?.thinking !== undefined && !allowed.efforts.includes(String(body.thinking))) return refuse(`${model} takes ${allowed.efforts.join(", ")}`, 403);
 }
 
@@ -164,7 +158,7 @@ export default {
       const page = THEMES.get(searchParams.get("theme") ?? "nanocode");
       return page ? env.ASSETS.fetch(new URL(page, request.url), { method: request.method }) : refuse("theme is claude, codex or nanocode", 404);
     }
-    if (request.method === "POST" && (pathname === "/api/device/register" || pathname === "/api/device/token")) return relay(request, pathname);
+    if (request.method === "POST" && (pathname === "/api/device/code" || pathname === "/api/device/token")) return Account.device(request, pathname.slice("/api/device/".length));
     if (request.method === "GET" && pathname.startsWith("/api/github/")) return archive(pathname);
     if (request.method === "GET" && pathname === "/install") return Response.redirect("https://nanocode.xyz/install", 308);
     if ((request.method === "GET" || request.method === "HEAD") && pathname === "/how-it-works") return Response.redirect("https://nanocode.xyz/experiments/durable-nanocode-on-cloudflare", 308);
