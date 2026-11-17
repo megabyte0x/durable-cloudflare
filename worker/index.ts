@@ -132,6 +132,7 @@ const sponsor = (env: Env) => {
 const wallets = Wallets.create<Env>({ account, kv: true, scripts: true, sponsor });
 
 const nanocode = App.create<Env>({
+  activeCacheMs: 30_000,
   authenticate,
   egress: wallets.egress(env => Gateway.create(env.AI, { id: env.AI_GATEWAY_ID, serviceTier: env.OPENAI_SERVICE_TIER, firstByteMs: Number(env.MODEL_FIRST_BYTE_MS) || undefined })),
   limits: session => session.provider === "claude" && session.model && !CLAUDE_MODELS.has(session.model) ? { max_tokens: Tempo.outputTokens } : undefined,
