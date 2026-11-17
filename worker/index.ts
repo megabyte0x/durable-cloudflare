@@ -133,7 +133,7 @@ const sponsor = (env: Env) => {
   };
 };
 
-const wallets = Wallets.create<Env>({ account, scripts: true, sponsor });
+const wallets = Wallets.create<Env>({ account, kv: true, scripts: true, sponsor });
 
 const nanocode = App.create<Env>({
   authenticate,
