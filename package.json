@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@pierre/highlights": "0.2.0",
-    "nanocode-ts": "github:nanocodexyz/nanocode-ts#0abe1e6d7d86dc939de780e6cd9f7923e52f4c07",
+    "nanocode-ts": "github:nanocodexyz/nanocode-ts#c49cf38607fb232fcf504a80d36ddb6bf2361e9c",
     "nds": "https://github.com/nanocodexyz/nds/releases/download/build-5454fa8/nds-5454fa8.tgz",
     "react": "19.3.1",
     "react-dom": "19.3.1",
