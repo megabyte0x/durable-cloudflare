@@ -14,7 +14,11 @@
   },
   "dependencies": {
     "@pierre/highlights": "0.2.0",
+<<<<<<< Updated upstream
     "nanocode-ts": "https://github.com/nanocodexyz/nanocode-ts/releases/download/build-fa6e5fd/nanocode-ts-fa6e5fd.tgz",
+=======
+    "nanocode-ts": "https://github.com/nanocodexyz/nanocode-ts/releases/download/build-67bdee0/nanocode-ts-67bdee0.tgz",
+>>>>>>> Stashed changes
     "nds": "https://github.com/nanocodexyz/nds/releases/download/build-85fc456/nds-85fc456.tgz",
     "pyodide": "314.0.7",
     "react": "19.3.1",
