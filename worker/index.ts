@@ -36,6 +36,8 @@ interface Env extends Machines.Env {
   SESSION_POOL_KEEPALIVE_MS: string;
   SESSION_POOL_SIZE: string;
   PLAN_SECRET: string;
+  TEMPO_SPONSOR_KEY?: string;
+  TEMPO_SPONSOR_ACCOUNT?: string;
 }
 
 const THEMES = new Map([["claude", "/claude"], ["codex", "/chatgpt"], ["nanocode", "/nanocode"]]);
@@ -115,7 +117,23 @@ async function onPlan(request: Request, env: Env, provider: unknown): Promise<bo
   return await env.PLANS.get(env.PLANS.idFromName(name)).signedIn(provider).catch(() => false);
 }
 
-const wallets = Wallets.create<Env>({ account, scripts: true });
+const hex = (name: string, value: string | undefined): `0x${string}` | undefined => {
+  if (value === undefined) return undefined;
+  if (!/^0x[0-9a-fA-F]+$/.test(value)) throw new Error(`${name} is not a 0x-prefixed hex string`);
+  return value as `0x${string}`;
+};
+
+const sponsor = (env: Env) => {
+  const key = hex("TEMPO_SPONSOR_KEY", env.TEMPO_SPONSOR_KEY);
+  return key && {
+    key,
+    account: hex("TEMPO_SPONSOR_ACCOUNT", env.TEMPO_SPONSOR_ACCOUNT),
+    allowance: { budget: "0.05", calls: 10, windowMs: 3_600_000 },
+    deposit: { opening: "0.01", topUp: "0.01", maximum: "0.05" },
+  };
+};
+
+const wallets = Wallets.create<Env>({ account, scripts: true, sponsor });
 
 const nanocode = App.create<Env>({
   authenticate,
