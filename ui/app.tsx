@@ -17,7 +17,7 @@ createRoot(document.getElementById("root")!).render(
           <li><strong>One Durable Object per session.</strong> The nanocode SDK as WebAssembly, with its journal in the object's SQLite.</li>
           <li><strong>Survives a reset.</strong> Pick "Kill the next tool call" and the turn resumes from its last checkpoint.</li>
           <li><strong>A shell without a machine.</strong> Cells run bash, git, Python and WebAssembly beside the agent.</li>
-          <li><strong>Yours to connect.</strong> Connect adds a Tempo Wallet, your ChatGPT or Claude plan, or your own machine.</li>
+          <li><strong>Yours to connect.</strong> Connect adds Tempo ID, your ChatGPT or Claude plan, or your own machine.</li>
         </Points>
         <Terminal><Demo theme="nanocode" /></Terminal>
         <Links>
