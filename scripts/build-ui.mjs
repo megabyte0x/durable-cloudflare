@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { build } from "esbuild";
-import { copyFile, mkdir, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { zyzz } from "zyzz/esbuild";
 
 for (const path of ["public/assets", "public/app.js", "public/app.css", "public/how-it-works.js", "public/how-it-works.css", "public/chatgpt.js", "public/chatgpt.css", "public/claude.js", "public/claude.css", "public/zyzz-assets", "public/zyzz.css", "public/zyzz.css.map", "public/zyzz.js"]) await rm(path, { force: true, recursive: true });
@@ -29,3 +31,9 @@ await build({
   splitting: true,
   target: "es2022",
 });
+
+await writeFile("public/version.json", JSON.stringify({
+  commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+  nanocodeTs: JSON.parse(await readFile("package.json", "utf8")).dependencies["nanocode-ts"],
+  wasmSha256: createHash("sha256").update(await readFile("node_modules/nanocode-ts/dist/nanocode_wasm.wasm")).digest("hex"),
+}));
