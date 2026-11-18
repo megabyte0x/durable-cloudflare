@@ -5,12 +5,14 @@
   "scripts": {
     "build": "node scripts/build-ui.mjs && npm run check",
     "check": "tsc --noEmit && tsc --project tsconfig.ui.json",
+    "deploy": "node scripts/deploy.ts",
+    "deploy:demo": "node scripts/deploy.ts demo",
+    "deploy:demo:raw": "CLOUDFLARE_ACCOUNT_ID=0a39052b0a32ba8c8444345fe21b7595 wrangler deploy --name nanocode-cloudflare-durable --var CHAT_PUBLIC:1 --var CLAUDE_MODEL:claude-haiku-5-5 --var AI_GATEWAY_ID:nanocode-cloudflare-durable --var WORKERS_AI_ACCOUNT_ID:0a39052b0a32ba8c8444345fe21b7595 --domain cloudflare.nanocode.xyz",
+    "deploy:raw": "wrangler deploy",
     "dev": "wrangler dev",
+    "drill": "node scripts/drill.mjs",
     "dry-run": "wrangler deploy --dry-run --outdir output/deploy",
-    "deploy": "wrangler deploy",
-    "deploy:demo": "CLOUDFLARE_ACCOUNT_ID=0a39052b0a32ba8c8444345fe21b7595 wrangler deploy --name nanocode-cloudflare-durable --var CHAT_PUBLIC:1 --var CLAUDE_MODEL:claude-haiku-5-5 --var AI_GATEWAY_ID:nanocode-cloudflare-durable --var WORKERS_AI_ACCOUNT_ID:0a39052b0a32ba8c8444345fe21b7595 --domain cloudflare.nanocode.xyz",
-    "measure": "node scripts/measure-local.mjs",
-    "drill": "node scripts/drill.mjs"
+    "measure": "node scripts/measure-local.mjs"
   },
   "dependencies": {
     "@pierre/highlights": "0.2.0",
