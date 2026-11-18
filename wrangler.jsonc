@@ -7,6 +7,7 @@
   "assets": { "binding": "ASSETS", "directory": "./public" },
   "build": { "command": "node scripts/build-ui.mjs" },
   "ai": { "binding": "AI" },
+  "services": [{ "binding": "PYTHON_SCI", "service": "nanocode-python-sci" }],
   "triggers": { "crons": ["* * * * *"] },
   "kv_namespaces": [{ "binding": "MCP_LISTINGS_KV" }],
   "ratelimits": [{ "name": "PUBLIC_RATE", "namespace_id": "4203", "simple": { "limit": 30, "period": 60 } }],

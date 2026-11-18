@@ -14,6 +14,7 @@ const VISITOR = Account.visitorHeader;
 interface Env extends Machines.Env {
   AI: Ai;
   ASSETS: Fetcher;
+  PYTHON_SCI?: Fetcher;
   AI_GATEWAY_ID: string;
   OPENAI_SERVICE_TIER: string;
   MODEL_FIRST_BYTE_MS?: string;
@@ -135,7 +136,7 @@ const nanocode = App.create<Env>({
   retainedTurns: 8,
   tools: charge,
   chaos: true,
-  workspace: { psh: pshModule, pythonModule },
+  workspace: { psh: pshModule, pythonModule, pythonSci: env => env.PYTHON_SCI },
   ...wallets.nanocode,
   ...(wallets.nanocode.mcp ? { mcp: { ...wallets.nanocode.mcp, store: env => ({ get: key => env.MCP_LISTINGS_KV.get(key, { cacheTtl: Number(env.MCP_LISTING_CACHE_TTL_S) }), put: (key, value, ttlMs) => env.MCP_LISTINGS_KV.put(key, value, { expirationTtl: Math.max(60, Math.ceil(ttlMs / 1000)) }) }) } } : {}),
 });

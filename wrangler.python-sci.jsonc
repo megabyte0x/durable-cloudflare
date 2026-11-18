@@ -1,0 +1,10 @@
+{
+  "name": "nanocode-python-sci",
+  "main": "python-sci/index.ts",
+  "workers_dev": false,
+  "compatibility_date": "2026-10-16",
+  "minify": true,
+  "assets": { "binding": "ASSETS", "directory": "./output/python-sci" },
+  "build": { "command": "node scripts/build-python-sci.mjs" },
+  "observability": { "enabled": true }
+}
