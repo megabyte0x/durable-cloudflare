@@ -6,7 +6,6 @@ import * as Account from "nanocode-ts/machines/server";
 import { CLAUDE_MODELS, PLAN_MODELS, PUBLIC_MODELS } from "./models";
 import { charge } from "./tools";
 import pshModule from "nanocode-ts/psh.wasm";
-import pythonModule from "nanocode-ts/python.wasm";
 
 const visitor = Account.visitor;
 const VISITOR = Account.visitorHeader;
@@ -135,7 +134,7 @@ const nanocode = App.create<Env>({
   retainedTurns: 8,
   tools: charge,
   chaos: true,
-  workspace: { psh: pshModule, pythonModule },
+  workspace: { psh: pshModule, pythonModule: false, pythonUnavailable: "Python is unavailable on this 128 MiB Workers host: the measured pandas workload needs at least 151.4 MiB before JavaScript and files. Use a Python-capable host or a separately provisioned Python service; no workload was run." },
   ...wallets.nanocode,
   ...(wallets.nanocode.mcp ? { mcp: { ...wallets.nanocode.mcp, store: env => ({ get: key => env.MCP_LISTINGS_KV.get(key, { cacheTtl: Number(env.MCP_LISTING_CACHE_TTL_S) }), put: (key, value, ttlMs) => env.MCP_LISTINGS_KV.put(key, value, { expirationTtl: Math.max(60, Math.ceil(ttlMs / 1000)) }) }) } } : {}),
 });
