@@ -1,6 +1,5 @@
 import "./stage.css";
 
-
 type Piece = { id: string; title: string; x: number; y: number; w: number; h: number; z: number; html: string; css: string; js: string; updated_at: number };
 type Snapshot = { pieces: Piece[]; theme: { css: string }; state: Record<string, Record<string, unknown>>; version: number; canUndo: boolean; canRedo: boolean };
 type View = { x: number; y: number; k: number };
@@ -9,7 +8,8 @@ type Message =
   | { type: "snapshot"; snapshot: Snapshot }
   | { type: "state"; id: string; key: string; value: unknown }
   | { type: "error"; message: string };
-type BridgeCall = { canvas: 1; id: number; op: "get" | "set" | "fetch"; key?: string; value?: unknown; url?: string; init?: { method?: string; headers?: Record<string, string>; body?: string } };
+type BridgeCall = { canvas: 1; id: number; op: "get" | "set" | "fetch" | "ask"; key?: string; value?: unknown; url?: string; init?: { method?: string; headers?: Record<string, string>; body?: string }; message?: string; context?: string; thread?: string; model?: string };
+type TurnEvent = { request_id: string; event: { type?: string; status?: string; error?: string; ok?: { message?: string }; event?: { type?: string; payload?: { text?: string } } } };
 
 const TOKEN_KEY = "nanocode-cloudflare-durable:token";
 const VIEW_KEY = "nanocode-canvas:view";
@@ -18,6 +18,7 @@ const ZOOM = { min: 0.1, max: 4 };
 const VIEWPORT_DEBOUNCE_MS = 300;
 const RECONNECT_MS = { first: 1000, max: 15000 };
 const NULL_BODY = new Set([101, 204, 205, 304]);
+const AGENT = { provider: "claude", model: "claude-sonnet-5-5", payer: "plan" };
 
 const stage = document.getElementById("stage") as HTMLDivElement;
 const world = document.getElementById("world") as HTMLDivElement;
@@ -87,9 +88,9 @@ const BRIDGE = `(() => {
   const pending = new Map();
   const listeners = [];
   let next = 0;
-  const call = (op, args) => new Promise((resolve, reject) => {
+  const call = (op, args, update) => new Promise((resolve, reject) => {
     const id = ++next;
-    pending.set(id, { resolve, reject });
+    pending.set(id, { resolve, reject, update });
     parent.postMessage({ canvas: 1, id, op, ...args }, "*");
   });
   addEventListener("message", event => {
@@ -100,6 +101,11 @@ const BRIDGE = `(() => {
       if (!waiting) return;
       pending.delete(data.reply);
       data.error ? waiting.reject(new Error(data.error)) : waiting.resolve(data.value);
+    } else if (data.progress) {
+      const waiting = pending.get(data.progress);
+      if (waiting && waiting.update) {
+        try { waiting.update(data.value); } catch (error) { console.error(error); }
+      }
     } else if (data.change) {
       for (const listener of listeners) {
         try { listener(data.key, data.value); } catch (error) { console.error(error); }
@@ -119,12 +125,29 @@ const BRIDGE = `(() => {
       const result = await call("fetch", { url: String(url), init: { method: init.method, headers, body } });
       return new Response(nullBody.includes(result.status) ? null : result.body, { status: result.status, headers: { "content-type": result.contentType } });
     },
+    agent: {
+      ask: (message, options = {}) => call("ask", {
+        message: String(message),
+        context: options.context === undefined ? undefined : typeof options.context === "string" ? options.context : JSON.stringify(options.context),
+        thread: options.thread === undefined ? undefined : String(options.thread),
+        model: options.model === undefined ? undefined : String(options.model),
+      }, options.onUpdate),
+    },
   };
 })();`;
 
+function classic(js: string): boolean {
+  try {
+    new Function(js);
+    return true;
+  } catch (error) {
+    return !(error instanceof SyntaxError);
+  }
+}
+
 function srcdoc(piece: Piece): string {
   const safe = (text: string) => text.replace(/<\/script/gi, "<\\/script");
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0}body{font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}</style><style>${piece.css.replace(/<\/style/gi, "<\\/style")}</style><script>${BRIDGE}</script></head><body>${piece.html}<script>${safe(piece.js)}</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0}body{font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}</style><style>${piece.css.replace(/<\/style/gi, "<\\/style")}</style><script>${BRIDGE}</script></head><body>${piece.html}<script${classic(piece.js) ? "" : ' type="module"'}>${safe(piece.js)}</script></body></html>`;
 }
 
 function place(item: Shown) {
@@ -204,6 +227,8 @@ async function bridge(event: MessageEvent) {
       else current[data.key!] = value;
       send({ type: "state", id: item.piece.id, key: data.key, value });
       reply(true);
+    } else if (data.op === "ask") {
+      reply(await ask(item, data, text => item.frame.contentWindow?.postMessage({ canvas: 1, progress: data.id, value: text }, "*")));
     } else if (data.op === "fetch") {
       const response = await fetch("api/canvas/fetch", { method: "POST", headers: headers(), body: JSON.stringify({ url: data.url, ...data.init }) });
       const refused = response.headers.get("x-canvas-proxy") === "refused";
@@ -213,6 +238,49 @@ async function bridge(event: MessageEvent) {
     }
   } catch (error) {
     reply(undefined, error instanceof Error ? error.message : String(error));
+  }
+}
+
+function prompt(item: Shown, data: BridgeCall): string {
+  const lines = [
+    `[A message from the "${item.piece.title}" piece (id ${item.piece.id}) on the canvas. Your reply text is shown directly in that piece, so answer the message itself, as the piece's assistant.]`,
+  ];
+  if (data.context) lines.push("", "Context the piece sent:", data.context);
+  lines.push("", "Message:", data.message ?? "");
+  return lines.join("\n");
+}
+
+async function ask(item: Shown, data: BridgeCall, update: (text: string) => void): Promise<string> {
+  const thread = data.thread ? `-${data.thread.toLowerCase().replace(/[^a-z0-9-]+/g, "-")}` : "";
+  const requestId = `piece-${item.piece.id}-${crypto.randomUUID()}`;
+  const response = await fetch(`sessions/piece-${item.piece.id}${thread}/turns`, {
+    method: "POST",
+    headers: { ...headers(), accept: "text/event-stream" },
+    body: JSON.stringify({ request_id: requestId, prompt: prompt(item, data), provider: AGENT.provider, model: data.model ?? AGENT.model, payer: AGENT.payer }),
+  });
+  if (!response.ok || !response.body) throw new Error(`the agent refused the message: HTTP ${response.status} ${await response.text()}`);
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffered = "";
+  for (;;) {
+    const read = await reader.read();
+    if (read.done) throw new Error("the agent's stream ended before its reply");
+    buffered += read.value;
+    let end;
+    while ((end = buffered.indexOf("\n\n")) >= 0) {
+      const block = buffered.slice(0, end);
+      buffered = buffered.slice(end + 2);
+      const line = block.split("\n").filter(part => part.startsWith("data:")).map(part => part.slice(5).trim()).join("");
+      if (!line) continue;
+      const turn = JSON.parse(line) as TurnEvent;
+      if (turn.request_id !== requestId) continue;
+      const inner = turn.event.event;
+      if (inner?.type === "assistant.message" && inner.payload?.text) update(inner.payload.text);
+      if (turn.event.type === "result") {
+        await reader.cancel().catch(() => undefined);
+        if (turn.event.status === "completed") return turn.event.ok?.message ?? "";
+        throw new Error(turn.event.error ?? `the agent's turn ${turn.event.status}`);
+      }
+    }
   }
 }
 
