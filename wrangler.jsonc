@@ -8,9 +8,9 @@
   "build": { "command": "node scripts/build-ui.mjs" },
   "ai": { "binding": "AI" },
   "triggers": { "crons": ["* * * * *"] },
-  "kv_namespaces": [{ "binding": "MCP_LISTINGS_KV" }],
+  "kv_namespaces": [{ "binding": "MCP_LISTINGS_KV", "id": "84321a38e1c84399a612377f2aa9f798" }],
   "ratelimits": [{ "name": "PUBLIC_RATE", "namespace_id": "4203", "simple": { "limit": 30, "period": 60 } }],
-  "containers": [{ "class_name": "RelayContainer", "image": "./node_modules/nanocode-ts/node_modules/nanocode-egress/relay.Dockerfile", "instance_type": "lite", "max_instances": 2 }],
+  "containers": [{ "class_name": "RelayContainer", "image": "./node_modules/nanocode-ts/node_modules/nanocode-egress/relay.Dockerfile", "instance_type": "lite", "max_instances": 2, "constraints": { "regions": ["WNAM", "ENAM"] } }],
   "durable_objects": {
     "bindings": [
       { "name": "SESSIONS", "class_name": "AgentSession" },
@@ -24,23 +24,12 @@
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["AgentSession"] },
-    { "tag": "v2", "new_sqlite_classes": ["PublicLimit"] },
-    { "tag": "v3", "new_sqlite_classes": ["HandRelay"] },
-    { "tag": "v4", "new_sqlite_classes": ["Wallet"] },
-    { "tag": "v5", "new_sqlite_classes": ["Python"], "deleted_classes": ["HandRelay"] },
-    { "tag": "v6", "new_sqlite_classes": ["HandRelay"] },
-    { "tag": "v7", "new_sqlite_classes": ["McpListings"] },
-    { "tag": "v8", "new_sqlite_classes": ["PlanVault", "RelayContainer"] },
-    { "tag": "v9", "new_sqlite_classes": ["SessionPool"] },
-    { "tag": "v10", "new_sqlite_classes": ["SessionShard"] },
-    { "tag": "v11", "deleted_classes": ["SessionShard"] },
-    { "tag": "v12", "deleted_classes": ["Python"] }
+    { "tag": "v1", "new_sqlite_classes": ["AgentSession", "PublicLimit", "HandRelay", "Wallet", "McpListings", "PlanVault", "RelayContainer", "SessionPool"] }
   ],
   "vars": {
     "AI_GATEWAY_ID": "default",
     "OPENAI_SERVICE_TIER": "",
-    "ACCESS_TOKEN_SHA256": "",
+    "ACCESS_TOKEN_SHA256": "17f36ccd12216824bbedb4d7e3b4d2b15546fe6f37c85871d3fe0be0bc11e09e",
     "CHAT_PUBLIC": "",
     "MODEL_AUTH": "api_key",
     "WORKERS_AI_ACCOUNT_ID": "",
