@@ -13,6 +13,7 @@ type Viewport = { x: number; y: number; w: number; h: number };
 const EMPTY_THEME: Theme = { css: "" };
 const TICKET_MS = 60_000;
 const DEFAULT_SIZE = { w: 360, h: 280 };
+const GAP = 24;
 
 export class Canvas extends DurableObject {
   private sql: SqlStorage;
@@ -102,14 +103,30 @@ export class Canvas extends DurableObject {
     return Object.values(this.pieces()).reduce((max, piece) => Math.max(max, piece.z), 0) + 1;
   }
 
+  private spot(w: number, h: number, x?: number, y?: number): { x: number; y: number } {
+    if (x !== undefined && y !== undefined) return { x, y };
+    const center = { x: x ?? Math.round(this.viewport.x + this.viewport.w / 2 - w / 2), y: y ?? Math.round(this.viewport.y + this.viewport.h / 2 - h / 2) };
+    const taken = Object.values(this.pieces());
+    const free = (left: number, top: number) => taken.every(piece => left + w + GAP <= piece.x || piece.x + piece.w + GAP <= left || top + h + GAP <= piece.y || piece.y + piece.h + GAP <= top);
+    for (let ring = 0; ring <= taken.length + 1; ring++) {
+      const step = ring * (Math.max(w, h) / 2 + GAP);
+      const candidates = ring === 0 ? [[0, 0]] : [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+      for (const [dx, dy] of candidates) {
+        const left = Math.round(center.x + dx * step * (x === undefined ? 1 : 0));
+        const top = Math.round(center.y + dy * step * (y === undefined ? 1 : 0));
+        if (free(left, top)) return { x: left, y: top };
+      }
+    }
+    return center;
+  }
+
   add(actor: Actor, input: { title: string; html: string; css?: string; js?: string; x?: number; y?: number; w?: number; h?: number }): Piece {
     const w = input.w ?? DEFAULT_SIZE.w;
     const h = input.h ?? DEFAULT_SIZE.h;
     const piece: Piece = {
       id: crypto.randomUUID().slice(0, 8),
       title: input.title,
-      x: input.x ?? Math.round(this.viewport.x + this.viewport.w / 2 - w / 2),
-      y: input.y ?? Math.round(this.viewport.y + this.viewport.h / 2 - h / 2),
+      ...this.spot(w, h, input.x, input.y),
       w,
       h,
       z: this.nextZ(),
@@ -162,20 +179,30 @@ export class Canvas extends DurableObject {
     return rows.map((row): Version => ({ seq: row.seq, op: row.op, actor: JSON.parse(row.actor) as Actor, at: row.at, summary: row.summary, undone: row.undone === 1 }));
   }
 
+  private keep(applying: Side, other: Side): Side {
+    const kept: Record<string, State> = { ...(other.state ?? {}) };
+    for (const [id, piece] of Object.entries(applying.pieces ?? {})) if (!piece && this.piece(id)) kept[id] = this.stateOf(id);
+    return { ...other, state: kept };
+  }
+
   undo(): boolean {
-    const row = this.sql.exec<{ seq: number; before: string }>(`SELECT seq, before FROM versions WHERE undone = 0 ORDER BY seq DESC LIMIT 1`).toArray()[0];
+    const row = this.sql.exec<{ seq: number; before: string; after: string }>(`SELECT seq, before, after FROM versions WHERE undone = 0 ORDER BY seq DESC LIMIT 1`).toArray()[0];
     if (!row) return false;
-    this.applySide(JSON.parse(row.before) as Side);
-    this.sql.exec(`UPDATE versions SET undone = 1 WHERE seq = ?`, row.seq);
+    const before = JSON.parse(row.before) as Side;
+    const after = this.keep(before, JSON.parse(row.after) as Side);
+    this.applySide(before);
+    this.sql.exec(`UPDATE versions SET undone = 1, after = ? WHERE seq = ?`, JSON.stringify(after), row.seq);
     this.broadcast({ type: "snapshot", snapshot: this.snapshot() });
     return true;
   }
 
   redo(): boolean {
-    const row = this.sql.exec<{ seq: number; after: string }>(`SELECT seq, after FROM versions WHERE undone = 1 ORDER BY seq ASC LIMIT 1`).toArray()[0];
+    const row = this.sql.exec<{ seq: number; before: string; after: string }>(`SELECT seq, before, after FROM versions WHERE undone = 1 ORDER BY seq ASC LIMIT 1`).toArray()[0];
     if (!row) return false;
-    this.applySide(JSON.parse(row.after) as Side);
-    this.sql.exec(`UPDATE versions SET undone = 0 WHERE seq = ?`, row.seq);
+    const after = JSON.parse(row.after) as Side;
+    const before = this.keep(after, JSON.parse(row.before) as Side);
+    this.applySide(after);
+    this.sql.exec(`UPDATE versions SET undone = 0, before = ? WHERE seq = ?`, JSON.stringify(before), row.seq);
     this.broadcast({ type: "snapshot", snapshot: this.snapshot() });
     return true;
   }
