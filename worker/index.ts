@@ -4,7 +4,8 @@ import { Tempo } from "nanocode-ts/machines";
 import { Env as Machines, Wallets } from "nanocode-ts/machines/cloudflare";
 import * as Account from "nanocode-ts/machines/server";
 import { CLAUDE_MODELS, PLAN_MODELS, PUBLIC_MODELS } from "./models";
-import { charge } from "./tools";
+import { Canvas } from "./canvas";
+import { canvasTools, INSTRUCTIONS, OWNER } from "./tools";
 import pshModule from "nanocode-ts/psh.wasm";
 import pythonModule from "nanocode-ts/python.wasm";
 
@@ -32,13 +33,14 @@ interface Env extends Machines.Env {
   SESSION_POOL_KEEPALIVE_MS: string;
   SESSION_POOL_SIZE: string;
   PLAN_SECRET: string;
+  CANVAS: DurableObjectNamespace<Canvas>;
   TEMPO_SPONSOR_KEY?: string;
   TEMPO_SPONSOR_ACCOUNT?: string;
 }
 
 const THEMES = new Map([["claude", "/claude"], ["codex", "/chatgpt"], ["nanocode", "/nanocode"]]);
 const DIGEST = /^[0-9a-f]{64}$/;
-const ACCOUNT = "owner";
+const ACCOUNT = OWNER;
 const PUBLIC_ACCOUNT = "public";
 const PUBLIC_PROMPT_CHARACTERS = 2000;
 const PUBLIC_ROUTE = /^\/(?:sessions\/[^/]+\/(?:turns(?:\/[^/]+(?:\/cancel)?)?|events|crash|warm|hands(?:\/[^/]+)?|files(?:\/.+)?|blobs\/[^/]+)|v1\/(?:keys|me)|api\/device\/(?:code|token)|plans(?:\/(?:claude|codex)(?:\/(?:sign-in|complete))?)?)$/;
@@ -133,7 +135,8 @@ const nanocode = App.create<Env>({
   payers: ["deployment", "plan", "wallet"],
   plans: { vault: env => env.PLANS, relay: env => env.RELAY, account },
   retainedTurns: 8,
-  tools: charge,
+  tools: canvasTools,
+  instructions: INSTRUCTIONS,
   chaos: true,
   workspace: { psh: pshModule, pythonModule },
   ...wallets.nanocode,
@@ -142,7 +145,59 @@ const nanocode = App.create<Env>({
 
 export const { AgentSession } = nanocode;
 export const { Wallet } = wallets;
-export { HandRelay, McpListings, PlanVault, PublicLimit, RelayContainer, SessionPool };
+export { Canvas, HandRelay, McpListings, PlanVault, PublicLimit, RelayContainer, SessionPool };
+
+const PRIVATE_HOST = /^(?:localhost|.*\.localhost|.*\.local|.*\.internal|0\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|127\.\d+\.\d+\.\d+|169\.254\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+|\[(?:::1?|f[cd][0-9a-f:]*|fe[89ab][0-9a-f:]*|::ffff:[0-9a-f.:]*)\])$/i;
+const HISTORY_PAGE = 50;
+
+async function proxy(request: Request): Promise<Response> {
+  const input = await request.json().catch(() => undefined) as { url?: unknown; method?: unknown; headers?: unknown; body?: unknown } | undefined;
+  let target: URL;
+  try {
+    target = new URL(String(input?.url));
+  } catch {
+    return Response.json({ error: "url is not a valid URL" }, { status: 400, headers: { "x-canvas-proxy": "refused" } });
+  }
+  if (target.protocol !== "https:" && target.protocol !== "http:") return Response.json({ error: "only http and https URLs are allowed" }, { status: 400, headers: { "x-canvas-proxy": "refused" } });
+  if (PRIVATE_HOST.test(target.hostname) || target.hostname === new URL(request.url).hostname) return Response.json({ error: `${target.hostname} is not a public host` }, { status: 400, headers: { "x-canvas-proxy": "refused" } });
+  const headers = new Headers(input?.headers && typeof input.headers === "object" ? input.headers as Record<string, string> : {});
+  headers.delete("cookie");
+  if (!headers.has("user-agent")) headers.set("user-agent", "nanocode-canvas");
+  if (headers.get("authorization") === request.headers.get("authorization")) headers.delete("authorization");
+  const method = typeof input?.method === "string" ? input.method.toUpperCase() : "GET";
+  const upstream = await fetch(target, { method, headers, body: method === "GET" || method === "HEAD" || input?.body === undefined ? undefined : String(input.body) });
+  return new Response(upstream.body, { status: upstream.status, headers: { "content-type": upstream.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store" } });
+}
+
+async function canvasRoute(request: Request, env: Env, pathname: string): Promise<Response> {
+  const canvas = env.CANVAS.getByName("main");
+  if (pathname === "/api/canvas/live") return await canvas.fetch(request);
+  if (!(await owner(request, env))) return refuse("this route needs the access token", 401);
+  const route = `${request.method} ${pathname}`;
+  const body = request.method === "POST" && pathname !== "/api/canvas/fetch" ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
+  const by = { kind: "owner" } as const;
+  try {
+    switch (route) {
+      case "POST /api/canvas/ticket": return Response.json({ ticket: await canvas.ticket() });
+      case "GET /api/canvas/snapshot": return Response.json(await canvas.snapshot());
+      case "GET /api/canvas/history": {
+        const before = new URL(request.url).searchParams.get("before");
+        return Response.json(await canvas.history(HISTORY_PAGE, before ? Number(before) : undefined));
+      }
+      case "POST /api/canvas/undo": return Response.json({ changed: await canvas.undo() });
+      case "POST /api/canvas/redo": return Response.json({ changed: await canvas.redo() });
+      case "POST /api/canvas/restore": return Response.json({ seq: await canvas.restore(by, Number(body.seq)) });
+      case "POST /api/canvas/theme": {
+        await canvas.setTheme(by, { css: String(body.css ?? "") });
+        return Response.json({ ok: true });
+      }
+      case "POST /api/canvas/fetch": return await proxy(request);
+      default: return refuse(`no canvas route ${route}`, 404);
+    }
+  } catch (error) {
+    return refuse(error instanceof Error ? error.message : String(error), 400);
+  }
+}
 
 let loaded: number | undefined;
 let served = 0;
@@ -155,7 +210,9 @@ export default {
     loaded ??= Date.now();
     served++;
     const { pathname, searchParams } = new URL(request.url);
-    if ((request.method === "GET" || request.method === "HEAD") && pathname === "/") {
+    if ((request.method === "GET" || request.method === "HEAD") && pathname === "/") return env.ASSETS.fetch(new URL("/canvas", request.url), { method: request.method });
+    if (pathname.startsWith("/api/canvas/")) return await canvasRoute(request, env, pathname);
+    if ((request.method === "GET" || request.method === "HEAD") && pathname === "/demo") {
       const page = THEMES.get(searchParams.get("theme") ?? "nanocode");
       return page ? env.ASSETS.fetch(new URL(page, request.url), { method: request.method }) : refuse("theme is claude, codex or nanocode", 404);
     }

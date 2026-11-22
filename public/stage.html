@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Canvas</title>
+    <link rel="stylesheet" href="stage.css" />
+    <style id="theme"></style>
+  </head>
+  <body>
+    <div id="stage" class="stage">
+      <div class="grid"></div>
+      <div id="world" class="world"></div>
+      <div id="empty" class="empty">Ask the agent to build something →</div>
+      <div class="tools">
+        <button id="fit" type="button">Fit all</button>
+        <button id="zoom" type="button">100%</button>
+        <span id="status" class="status">connecting</span>
+      </div>
+    </div>
+    <script src="stage.js" type="module"></script>
+  </body>
+</html>

@@ -11,7 +11,7 @@ const PROMPTS = [
   "Search the web for today's Tempo news",
 ];
 
-export function Demo(props: { theme: Theme; title?: string }) {
+export function Demo(props: { theme: Theme; title?: string; prompts?: readonly string[] }) {
   return (
     <Agent
       connect={({ headers, selection, session }) => ({
@@ -23,7 +23,7 @@ export function Demo(props: { theme: Theme; title?: string }) {
       footer={props.title && <Footer title={props.title} />}
       harnesses={PUBLIC_HARNESSES}
       planHarnesses={PLAN_HARNESSES}
-      prompts={PROMPTS}
+      prompts={props.prompts ?? PROMPTS}
       scripts
       storage="nanocode-cloudflare-durable"
       theme={props.theme}

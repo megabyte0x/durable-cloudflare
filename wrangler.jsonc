@@ -20,11 +20,13 @@
       { "name": "WALLETS", "class_name": "Wallet" },
       { "name": "PLANS", "class_name": "PlanVault" },
       { "name": "RELAY", "class_name": "RelayContainer" },
-      { "name": "SESSION_POOL", "class_name": "SessionPool" }
+      { "name": "SESSION_POOL", "class_name": "SessionPool" },
+      { "name": "CANVAS", "class_name": "Canvas" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["AgentSession", "PublicLimit", "HandRelay", "Wallet", "McpListings", "PlanVault", "RelayContainer", "SessionPool"] }
+    { "tag": "v1", "new_sqlite_classes": ["AgentSession", "PublicLimit", "HandRelay", "Wallet", "McpListings", "PlanVault", "RelayContainer", "SessionPool"] },
+    { "tag": "v2", "new_sqlite_classes": ["Canvas"] }
   ],
   "vars": {
     "AI_GATEWAY_ID": "default",

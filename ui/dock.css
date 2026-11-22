@@ -1,0 +1,16 @@
+html, body { height: 100%; margin: 0; }
+#root { height: 100dvh; }
+.dock { display: flex; flex-direction: column; height: 100%; }
+.dock-controls { flex: none; padding: 8px 10px; border-bottom: 1px solid rgba(0, 0, 0, 0.1); font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.dock-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.dock-row button, .dock-history button { font: inherit; padding: 4px 9px; border-radius: 7px; border: 1px solid rgba(0, 0, 0, 0.16); background: #fff; cursor: pointer; }
+.dock-row button:disabled { opacity: 0.4; cursor: default; }
+.dock-row button[aria-pressed="true"] { background: #1d1d1f; color: #fff; }
+.dock-problem { margin-top: 6px; color: #b42318; }
+.dock-history { list-style: none; margin: 8px 0 0; padding: 0; max-height: 35vh; overflow: auto; }
+.dock-history li { display: flex; gap: 6px; align-items: center; padding: 4px 0; border-top: 1px solid rgba(0, 0, 0, 0.06); }
+.dock-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-seq, .dock-muted { color: #6b6b70; }
+.dock-undone .dock-summary { text-decoration: line-through; color: #8b8b90; }
+.dock-chat { flex: 1; min-height: 0; overflow: hidden; }
+.dock-chat > * { height: 100%; }
