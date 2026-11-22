@@ -10,7 +10,6 @@
   "triggers": { "crons": ["* * * * *"] },
   "kv_namespaces": [{ "binding": "MCP_LISTINGS_KV", "id": "84321a38e1c84399a612377f2aa9f798" }],
   "ratelimits": [{ "name": "PUBLIC_RATE", "namespace_id": "4203", "simple": { "limit": 30, "period": 60 } }],
-  "containers": [{ "class_name": "RelayContainer", "image": "./node_modules/nanocode-ts/node_modules/nanocode-egress/relay.Dockerfile", "instance_type": "lite", "max_instances": 2, "constraints": { "regions": ["WNAM", "ENAM"] } }],
   "durable_objects": {
     "bindings": [
       { "name": "SESSIONS", "class_name": "AgentSession" },
@@ -19,14 +18,14 @@
       { "name": "MCP_LISTINGS", "class_name": "McpListings" },
       { "name": "WALLETS", "class_name": "Wallet" },
       { "name": "PLANS", "class_name": "PlanVault" },
-      { "name": "RELAY", "class_name": "RelayContainer" },
       { "name": "SESSION_POOL", "class_name": "SessionPool" },
       { "name": "CANVAS", "class_name": "Canvas" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["AgentSession", "PublicLimit", "HandRelay", "Wallet", "McpListings", "PlanVault", "RelayContainer", "SessionPool"] },
-    { "tag": "v2", "new_sqlite_classes": ["Canvas"] }
+    { "tag": "v2", "new_sqlite_classes": ["Canvas"] },
+    { "tag": "v3", "deleted_classes": ["RelayContainer"] }
   ],
   "vars": {
     "AI_GATEWAY_ID": "default",

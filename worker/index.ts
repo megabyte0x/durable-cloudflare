@@ -1,5 +1,5 @@
 import { Remote } from "nanocode-ts";
-import { App, Gateway, HandRelay, Limit, McpListings, PlanVault, Pool, PublicLimit, Relay, RelayContainer, SessionPool } from "nanocode-ts/cloudflare";
+import { App, Gateway, HandRelay, Limit, McpListings, PlanVault, Pool, PublicLimit, Relay, SessionPool } from "nanocode-ts/cloudflare";
 import { Tempo } from "nanocode-ts/machines";
 import { Env as Machines, Wallets } from "nanocode-ts/machines/cloudflare";
 import * as Account from "nanocode-ts/machines/server";
@@ -27,7 +27,6 @@ interface Env extends Machines.Env {
   MCP_LISTINGS_KV: KVNamespace;
   MCP_LISTING_CACHE_TTL_S: string;
   PLANS: DurableObjectNamespace<PlanVault>;
-  RELAY: DurableObjectNamespace<RelayContainer>;
   SESSION_POOL: DurableObjectNamespace<SessionPool>;
   SESSION_POOL_CACHED_NAMES: string;
   SESSION_POOL_KEEPALIVE_MS: string;
@@ -133,7 +132,7 @@ const nanocode = App.create<Env>({
   egress: wallets.egress(env => Gateway.create(env.AI, { id: env.AI_GATEWAY_ID, serviceTier: env.OPENAI_SERVICE_TIER, firstByteMs: Number(env.MODEL_FIRST_BYTE_MS) || undefined })),
   limits: session => session.provider === "claude" && session.model && !CLAUDE_MODELS.has(session.model) ? { max_tokens: Tempo.outputTokens } : undefined,
   payers: ["deployment", "plan", "wallet"],
-  plans: { vault: env => env.PLANS, relay: env => env.RELAY, account },
+  plans: { vault: env => env.PLANS, account },
   retainedTurns: 8,
   tools: canvasTools,
   instructions: INSTRUCTIONS,
@@ -145,7 +144,7 @@ const nanocode = App.create<Env>({
 
 export const { AgentSession } = nanocode;
 export const { Wallet } = wallets;
-export { Canvas, HandRelay, McpListings, PlanVault, PublicLimit, RelayContainer, SessionPool };
+export { Canvas, HandRelay, McpListings, PlanVault, PublicLimit, SessionPool };
 
 const PRIVATE_HOST = /^(?:localhost|.*\.localhost|.*\.local|.*\.internal|0\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|127\.\d+\.\d+\.\d+|169\.254\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+|\[(?:::1?|f[cd][0-9a-f:]*|fe[89ab][0-9a-f:]*|::ffff:[0-9a-f.:]*)\])$/i;
 const HISTORY_PAGE = 50;
