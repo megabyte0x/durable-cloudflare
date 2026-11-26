@@ -9,6 +9,7 @@ type Message =
   | { type: "state"; id: string; key: string; value: unknown }
   | { type: "error"; message: string };
 type BridgeCall = { canvas: 1; id: number; op: "get" | "set" | "fetch" | "ask"; key?: string; value?: unknown; url?: string; init?: { method?: string; headers?: Record<string, string>; body?: string }; message?: string; context?: string; thread?: string; model?: string };
+type PieceZoom = { canvas: 1; zoom: 1; x: number; y: number; deltaY: number };
 type TurnEvent = { request_id: string; event: { type?: string; status?: string; error?: string; ok?: { message?: string }; event?: { type?: string; payload?: { text?: string } } } };
 
 const TOKEN_KEY = "nanocode-cloudflare-durable:token";
@@ -112,6 +113,11 @@ const BRIDGE = `(() => {
       }
     }
   });
+  addEventListener("wheel", event => {
+    if (event.defaultPrevented || !(event.ctrlKey || event.metaKey)) return;
+    event.preventDefault();
+    parent.postMessage({ canvas: 1, zoom: 1, x: event.clientX, y: event.clientY, deltaY: event.deltaY }, "*");
+  }, { passive: false });
   const nullBody = [101, 204, 205, 304];
   window.canvas = {
     state: {
@@ -345,12 +351,25 @@ function zoomAt(k: number, cx: number, cy: number) {
   applyView();
 }
 
+function pinch(deltaY: number, clientX: number, clientY: number) {
+  const rect = stage.getBoundingClientRect();
+  zoomAt(view.k * Math.exp(-deltaY * 0.01), clientX - rect.left, clientY - rect.top);
+}
+
+function pieceZoom(event: MessageEvent) {
+  const data = event.data as PieceZoom | undefined;
+  if (!data || data.canvas !== 1 || data.zoom !== 1) return;
+  const item = [...shown.values()].find(candidate => candidate.frame.contentWindow === event.source);
+  if (!item) return;
+  const rect = item.frame.getBoundingClientRect();
+  const scale = rect.width / item.frame.clientWidth;
+  pinch(data.deltaY, rect.left + data.x * scale, rect.top + data.y * scale);
+}
+
 stage.addEventListener("wheel", event => {
   event.preventDefault();
-  if (event.ctrlKey || event.metaKey) {
-    const rect = stage.getBoundingClientRect();
-    zoomAt(view.k * Math.exp(-event.deltaY * 0.01), event.clientX - rect.left, event.clientY - rect.top);
-  } else {
+  if (event.ctrlKey || event.metaKey) pinch(event.deltaY, event.clientX, event.clientY);
+  else {
     view = { ...view, x: view.x - event.deltaX, y: view.y - event.deltaY };
     applyView();
   }
@@ -421,7 +440,10 @@ function retry() {
   reconnectMs = Math.min(RECONNECT_MS.max, reconnectMs * 2);
 }
 
-addEventListener("message", event => void bridge(event));
+addEventListener("message", event => {
+  pieceZoom(event);
+  void bridge(event);
+});
 addEventListener("storage", event => {
   if (event.key === TOKEN_KEY && !socket) void connect();
 });
